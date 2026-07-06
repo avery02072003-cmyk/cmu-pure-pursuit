@@ -37,9 +37,22 @@ delta_pp = atan2(2 * params.L * sin(alpha), Ld);
 yaw_ref = refpath.phi(idx_near);
 he_now = atan2(sin(yaw - yaw_ref), cos(yaw - yaw_ref));
 
-delta = delta_pp - params.Kh * he_now;
+v_safe = max(v, 1.0);
+delta_fb = -params.Kh * he_now / v_safe;
 
-delta_max = deg2rad(35);
-delta = max(-delta_max, min(delta, delta_max));
+delta = delta_pp + delta_fb;
+
+delta_max_phys = deg2rad(35);
+delta = max(-delta_max_phys, min(delta, delta_max_phys));
+
+kappa_cmd = tan(delta) / params.L;
+a_lat_cmd = v^2 * kappa_cmd;
+
+if abs(a_lat_cmd) > params.a_lat_max
+    kappa_limited = sign(a_lat_cmd) * params.a_lat_max / max(v^2, 1e-3);
+    delta = atan(kappa_limited * params.L);
+end
+
+delta = max(-delta_max_phys, min(delta, delta_max_phys));
 
 end
