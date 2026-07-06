@@ -32,7 +32,12 @@ ty = refpath.y(idx_target);
 alpha = atan2(ty - y, tx - x) - yaw;
 alpha = atan2(sin(alpha), cos(alpha));
 
-delta = atan2(2 * params.L * sin(alpha), Ld);
+delta_pp = atan2(2 * params.L * sin(alpha), Ld);
+
+yaw_ref = refpath.phi(idx_near);
+he_now = atan2(sin(yaw - yaw_ref), cos(yaw - yaw_ref));
+
+delta = delta_pp - params.Kh * he_now;
 
 delta_max = deg2rad(35);
 delta = max(-delta_max, min(delta, delta_max));
