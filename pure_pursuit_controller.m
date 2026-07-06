@@ -16,7 +16,7 @@ end
 Ld = params.Ld0 + params.kv * abs(v) - params.kappa_gain * kappa_near;
 Ld = max(params.Ld_min, min(Ld, params.Ld_max));
 
-% --- 弧長累加搜尋 idx_target ---
+% 弧長累加搜尋 idx_target
 arc = 0;
 idx_target = idx_near;
 for step_i = 1:N-1
@@ -33,33 +33,28 @@ end
 tx = refpath.x(idx_target);
 ty = refpath.y(idx_target);
 
-% --- pure pursuit 幾何 ---
+% pure pursuit 幾何
 alpha = atan2(ty - y, tx - x) - yaw;
 alpha = atan2(sin(alpha), cos(alpha));
 delta_pp = atan2(2 * params.L * sin(alpha), Ld);
 
-% --- 從路徑座標估計 idx_target 的局部切線方向 ---
+% 座標差分估計 idx_target 切線方向
 hw = 2;
 i_a = mod(idx_target - 1 - hw, N) + 1;
 i_b = mod(idx_target - 1 + hw, N) + 1;
 yaw_target = atan2(refpath.y(i_b) - refpath.y(i_a), ...
                    refpath.x(i_b) - refpath.x(i_a));
 
-% --- adaptive Kh：曲率大時自動降低回授增益 ---
-k_kappa_scale = 8.0;
-Kh_base = 0.9;
-Kh_now = Kh_base / (1 + k_kappa_scale * kappa_near);
-
 he_now = atan2(sin(yaw - yaw_target), cos(yaw - yaw_target));
 v_safe = max(v, 1.0);
-delta_fb = -Kh_now * he_now / v_safe;
+delta_fb = -params.Kh * he_now / v_safe;
 
 delta = delta_pp + delta_fb;
 
 delta_max_phys = deg2rad(35);
 delta = max(-delta_max_phys, min(delta, delta_max_phys));
 
-% --- 側向加速度硬限制 ---
+% 側向加速度硬限制
 kappa_cmd = tan(delta) / params.L;
 a_lat_cmd  = v^2 * kappa_cmd;
 if abs(a_lat_cmd) > params.a_lat_max
