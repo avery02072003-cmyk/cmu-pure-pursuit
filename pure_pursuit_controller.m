@@ -1,7 +1,6 @@
 function [delta, idx_target, idx_near, Ld, alpha] = pure_pursuit_controller(x, y, yaw, v, refpath, params, idx_prev)
 
 N = length(refpath.x);
-
 dist_all = hypot(refpath.x - x, refpath.y - y);
 
 search_len = 80;
@@ -10,7 +9,12 @@ search_range = mod((idx_prev-1):(idx_prev-1+search_len), N) + 1;
 [~, local_min] = min(dist_all(search_range));
 idx_near = search_range(local_min);
 
-Ld = params.Ld0 + params.kv * abs(v);
+kappa_near = 0;
+if isfield(refpath, 'kappa')
+    kappa_near = abs(refpath.kappa(idx_near));
+end
+
+Ld = params.Ld0 + params.kv * abs(v) - params.kappa_gain * kappa_near;
 Ld = max(params.Ld_min, min(Ld, params.Ld_max));
 
 idx_target = idx_near;

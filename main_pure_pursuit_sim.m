@@ -6,8 +6,9 @@ params.Ts = 0.05;
 params.L  = 2.7;
 params.Ld0 = 2.0;
 params.kv = 0.3;
-params.Ld_min = 2.0;
+params.Ld_min = 1.2;
 params.Ld_max = 8.0;
+params.kappa_gain = 6.0;
 
 % ---- dynamic speed planning parameters ----
 params.v_des = 6.0;         % desired cruise speed (m/s)
