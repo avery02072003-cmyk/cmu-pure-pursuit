@@ -16,12 +16,17 @@ end
 Ld = params.Ld0 + params.kv * abs(v) - params.kappa_gain * kappa_near;
 Ld = max(params.Ld_min, min(Ld, params.Ld_max));
 
-% --- 原版 idx_target 搜尋，保持 CTE 幾何正確 ---
+% --- 改用弧長累加搜尋 idx_target ---
+% 沿路徑從 idx_near 出發，累加段距離，找第一個累加弧長 >= Ld 的點
+arc = 0;
 idx_target = idx_near;
-for step_i = 0:N-1
-    i = mod(idx_near - 1 + step_i, N) + 1;
-    if dist_all(i) >= Ld
-        idx_target = i;
+for step_i = 1:N-1
+    i_cur = mod(idx_near - 1 + step_i - 1, N) + 1;
+    i_nxt = mod(idx_near - 1 + step_i,     N) + 1;
+    arc = arc + hypot(refpath.x(i_nxt) - refpath.x(i_cur), ...
+                      refpath.y(i_nxt) - refpath.y(i_cur));
+    if arc >= Ld
+        idx_target = i_nxt;
         break;
     end
 end
@@ -29,14 +34,12 @@ end
 tx = refpath.x(idx_target);
 ty = refpath.y(idx_target);
 
-% --- pure pursuit 幾何（不變）---
+% --- pure pursuit 幾何 ---
 alpha = atan2(ty - y, tx - x) - yaw;
 alpha = atan2(sin(alpha), cos(alpha));
 delta_pp = atan2(2 * params.L * sin(alpha), Ld);
 
-% --- 關鍵修正：yaw_target 改用 idx_target 的切線方向 ---
-% 原本是 refpath.phi(idx_near)，現在改成 refpath.phi(idx_target)
-% 讓 delta_pp 和 delta_fb 對齊同一個點的參考方向
+% --- heading feedback 對齊 idx_target 的切線方向 ---
 yaw_target = refpath.phi(idx_target);
 he_now = atan2(sin(yaw - yaw_target), cos(yaw - yaw_target));
 v_safe = max(v, 1.0);
@@ -47,7 +50,7 @@ delta = delta_pp + delta_fb;
 delta_max_phys = deg2rad(35);
 delta = max(-delta_max_phys, min(delta, delta_max_phys));
 
-% --- 側向加速度硬限制（不變）---
+% --- 側向加速度硬限制 ---
 kappa_cmd = tan(delta) / params.L;
 a_lat_cmd  = v^2 * kappa_cmd;
 if abs(a_lat_cmd) > params.a_lat_max
