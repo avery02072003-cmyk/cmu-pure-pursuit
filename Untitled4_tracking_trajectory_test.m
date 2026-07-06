@@ -54,6 +54,9 @@ x=[x2 x1 x0 x5] ;
 y=[y2 y1 y0 y5] ;
 M=length(x);
 
+ref_x = [];
+ref_y = [];
+
 
 clear x0 x1 x2 x3 xe
 clear y0 y1 y2 y3 ye
@@ -117,6 +120,9 @@ Temp=[ ZZ(1,i) ZZ(2,i)]';
 ZZ_R(:,i)=TFS*Temp+now;
 end
 
+ref_x = [ref_x, ZZ_R(1,:)];
+ref_y = [ref_y, ZZ_R(2,:)];
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 figure (2)
@@ -139,3 +145,13 @@ legend([p1 p2 p3 p4],{'Tractor Waypoint','Trailer Waypoint','Tractor Trajectory'
 % pause
 end
 
+dx = diff(ref_x);
+dy = diff(ref_y);
+ref_phi = atan2(dy, dx);
+ref_phi = [ref_phi, ref_phi(end)];
+
+refpath.x = ref_x(:);
+refpath.y = ref_y(:);
+refpath.phi = ref_phi(:);
+refpath.v = 3.0 * ones(length(ref_x),1);   % 第一版先固定速度
+save('reference_path.mat', 'refpath');
