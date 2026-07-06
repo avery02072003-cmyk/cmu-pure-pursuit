@@ -32,7 +32,34 @@ v_curve = sqrt(params.a_lat_max ./ max(abs(refpath.kappa), 1e-4));
 v_curve = min(v_curve, params.v_des);
 v_curve = max(v_curve, params.v_min);
 
-refpath.v_profile = v_curve(:);
+N = length(refpath.x);
+s_arc = zeros(N,1);
+for i = 2:N
+    s_arc(i) = s_arc(i-1) + hypot(refpath.x(i)-refpath.x(i-1), refpath.y(i)-refpath.y(i-1));
+end
+
+v_profile = v_curve(:);
+
+for i = N-1:-1:1
+    ds = s_arc(i+1) - s_arc(i);
+    if ds < 1e-6
+        continue;
+    end
+    v_allow = sqrt(v_profile(i+1)^2 + 2*params.a_dec_max*ds);
+    v_profile(i) = min(v_profile(i), v_allow);
+end
+
+for i = 2:N
+    ds = s_arc(i) - s_arc(i-1);
+    if ds < 1e-6
+        continue;
+    end
+    v_allow = sqrt(v_profile(i-1)^2 + 2*params.a_acc_max*ds);
+    v_profile(i) = min(v_profile(i), v_allow);
+end
+
+refpath.v_profile = v_profile;
+refpath.s_arc = s_arc;
 
 x = refpath.x(1);
 y = refpath.y(1);
