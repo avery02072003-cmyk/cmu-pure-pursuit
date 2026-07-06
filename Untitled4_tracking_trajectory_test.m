@@ -75,7 +75,12 @@ figure (1)
 plot(theda);
 
 %%%%%%%%%%%%%%%%%%%%%%%       Path Generator     %%%%%%%%%%%%%%%%%%%%%%%%%%
-for k=1:100
+% for k=1:100
+
+M = length(x);
+seg_len = 120;
+num_seg = floor(M / seg_len);
+for k = 1:num_seg
     
 % start=2000; 
 start=(k-1)*120+2
@@ -83,6 +88,11 @@ target=120*k
 if target>=M
 target=M-1;
 end
+
+if start > length(x) || target > length(x)
+    break;
+end
+now=[x(start);y(start)];
 
 now=[x(start);y(start)];
 next=[x(target);y(target)];
