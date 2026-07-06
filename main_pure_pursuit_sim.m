@@ -24,9 +24,17 @@ ds_ref = hypot(dx_ref, dy_ref);
 ds_ref(ds_ref < 1e-6) = 1e-6;
 
 phi_unwrap = unwrap(refpath.phi);
-kappa_ref = gradient(phi_unwrap) ./ ds_ref;
+kappa_raw = gradient(phi_unwrap) ./ ds_ref;
 
-refpath.kappa = kappa_ref;
+kappa_max_physical = tan(deg2rad(35)) / params.L;
+kappa_raw(abs(kappa_raw) > kappa_max_physical) = ...
+    sign(kappa_raw(abs(kappa_raw) > kappa_max_physical)) * kappa_max_physical;
+
+win = 9;
+kernel = ones(1, win) / win;
+kappa_smooth = conv([kappa_raw(1)*ones(1,(win-1)/2), kappa_raw(:)', kappa_raw(end)*ones(1,(win-1)/2)], kernel, 'valid');
+
+refpath.kappa = kappa_smooth(:);
 
 % ---- curvature-based speed limit ----
 v_curve = sqrt(params.a_lat_max ./ max(abs(refpath.kappa), 1e-4));
