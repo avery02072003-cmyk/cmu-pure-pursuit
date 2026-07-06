@@ -39,8 +39,13 @@ alpha = atan2(ty - y, tx - x) - yaw;
 alpha = atan2(sin(alpha), cos(alpha));
 delta_pp = atan2(2 * params.L * sin(alpha), Ld);
 
-% --- heading feedback 對齊 idx_target 的切線方向 ---
-yaw_target = refpath.phi(idx_target);
+% --- 從路徑座標估計 idx_target 的局部切線方向（取前後各 2 點平均）---
+hw = 2;  % half-window
+i_a = mod(idx_target - 1 - hw, N) + 1;
+i_b = mod(idx_target - 1 + hw, N) + 1;
+yaw_target = atan2(refpath.y(i_b) - refpath.y(i_a), ...
+                   refpath.x(i_b) - refpath.x(i_a));
+
 he_now = atan2(sin(yaw - yaw_target), cos(yaw - yaw_target));
 v_safe = max(v, 1.0);
 delta_fb = -params.Kh * he_now / v_safe;
