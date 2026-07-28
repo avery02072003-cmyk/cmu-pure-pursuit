@@ -169,8 +169,8 @@ v    = refpath.v_profile(1);
 % 初始 hitch / trailer axle
 xh = x0 - params.M1 * cos(yaw0);
 yh = y0 - params.M1 * sin(yaw0);
-x1 = xh - params.L2 * cos(yaw1);
-y1 = yh - params.L2 * sin(yaw1);
+x1 = xh - params.d_hitch2axle * cos(yaw1);
+y1 = yh - params.d_hitch2axle * sin(yaw1);
 
 % 模擬總步數（最多 3000 步，或路徑長度，取較小值）
 Nsim = min(length(refpath.x), 3000);
