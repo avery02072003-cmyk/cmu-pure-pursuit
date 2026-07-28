@@ -28,10 +28,14 @@ clear; clc; close all;
 % -------------------------------------------------------------------------
 load('reference_path.mat', 'refpath');
 
-% 讀取你從 beta1-5 複製來的參數
-STEP1_VehicleParameters;      % 若此檔會 save vehicleparams.mat
+% --- 載入聯結車幾何參數（必須在其他 params 設定之前）---
+STEP1_VehicleParameters;
 if exist('vehicleparams.mat','file')
     load('vehicleparams.mat','params');
+end
+% 確認 L1 存在後才能相容賦值
+if ~isfield(params,'L1')
+    error('STEP1_VehicleParameters 沒有定義 params.L1，請確認檔案正確');
 end
 
 % 若 STEP1_VehicleParameters 是 function，改成：
@@ -88,7 +92,7 @@ kappa_raw = gradient(phi_unwrap) ./ ds_ref;
 
 % 物理可行性截斷：最大曲率對應最大轉向角 35°
 % kappa_max = tan(35°) / L
-kappa_max_physical = tan(deg2rad(35)) / params.L;
+kappa_max_physical = tan(deg2rad(35)) / params.L1;
 kappa_raw(abs(kappa_raw) > kappa_max_physical) = ...
     sign(kappa_raw(abs(kappa_raw) > kappa_max_physical)) * kappa_max_physical;
 
@@ -234,7 +238,8 @@ for k = 1:Nsim
     % 輸入：當前車輛狀態 (x, y, yaw, v)、參考路徑、參數、上步最近點索引
     % 輸出：delta（轉向角）、idx_target（目標點）、idx_near（最近點）
     %       Ld（前視距離）、alpha（方位角誤差）
-    [delta, idx_target, idx_near, Ld, alpha] = pure_pursuit_controller(x, y, yaw, v, refpath, params, idx_prev);
+    [delta, idx_target, idx_near, Ld, alpha] = ...
+    pure_pursuit_controller(x0, y0, yaw0, v, refpath, params, idx_prev);
 
     % 更新搜尋視窗起點為本步最近點（下步搜尋從這裡開始，加速搜尋）
     idx_prev = idx_near;
@@ -275,15 +280,30 @@ for k = 1:Nsim
     kappa_now = tan(delta) / params.L;  % 由轉向角估算曲率
     a_lat_now = v^2 * kappa_now;        % 側向加速度 = v² · kappa
 
-    % --- Bicycle Model 狀態更新（前向 Euler 積分）---
-    % 運動學方程：
-    %   dx/dt = v · cos(yaw)          → x 方向速度分量
-    %   dy/dt = v · sin(yaw)          → y 方向速度分量
-    %   d(yaw)/dt = v/L · tan(delta)  → 角速度（Bicycle Model）
-    x   = x   + v * cos(yaw) * params.Ts;              % x 位置更新
-    y   = y   + v * sin(yaw) * params.Ts;              % y 位置更新
-    yaw = yaw + v / params.L * tan(delta) * params.Ts; % 航向角更新
-    yaw = atan2(sin(yaw), cos(yaw));                   % 角度正規化到 (-π, π)
+   % --- Tractor 更新 ---
+    x0  = x0  + v * cos(yaw0) * params.Ts;
+    y0  = y0  + v * sin(yaw0) * params.Ts;
+    yaw0 = yaw0 + (v / params.L1) * tan(delta) * params.Ts;
+    yaw0 = atan2(sin(yaw0), cos(yaw0));
+
+    % --- Hitch 點更新（tractor 後懸 M1 處）---
+    xh = x0 - params.M1 * cos(yaw0);
+    yh = y0 - params.M1 * sin(yaw0);
+
+    % --- Trailer 航向更新（off-axle hitch 方程）---
+    % omega1 = (v/L1)*tan(delta)  →  tractor yaw rate
+    omega1 = (v / params.L1) * tan(delta);
+    % trailer yaw rate：由 hitch 速度約束推導
+    % d(yaw1)/dt = (v*cos(yaw0-yaw1) + M1*omega1*sin(yaw0-yaw1)) / L2 ...
+    %              - (params.d / L2) * omega1   % d = off-axle 距離（若有）
+    beta_hitch = yaw0 - yaw1;   % hitch angle
+    yaw1_dot = (v * cos(beta_hitch) + params.M1 * omega1 * sin(beta_hitch)) / params.L2;
+    yaw1 = yaw1 + yaw1_dot * params.Ts;
+    yaw1 = atan2(sin(yaw1), cos(yaw1));
+
+    % --- Trailer 軸中心更新 ---
+    x1 = xh - params.L2 * cos(yaw1);
+    y1 = yh - params.L2 * sin(yaw1);
 
     % --- 記錄本步所有狀態 ---
     hist.x(k)          = x;
@@ -299,6 +319,16 @@ for k = 1:Nsim
     hist.he(k)         = he;
     hist.kappa(k)      = kappa_now;
     hist.a_lat(k)      = a_lat_now;
+
+    hist.x0(k)   = x0;
+    hist.y0(k)   = y0;
+    hist.yaw0(k) = yaw0;
+    hist.x1(k)   = x1;
+    hist.y1(k)   = y1;
+    hist.yaw1(k) = yaw1;
+    hist.xh(k)   = xh;
+    hist.yh(k)   = yh;
+
 end
 
 % =========================================================================
