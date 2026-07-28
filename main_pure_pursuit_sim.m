@@ -15,7 +15,6 @@
 %   - 縱向加速度約束：forward-backward speed pass
 %   - 追蹤控制器：pure_pursuit_controller.m
 %
-% 作者：avery02072003-cmyk
 % =========================================================================
 
 clear; clc; close all;
@@ -29,12 +28,23 @@ clear; clc; close all;
 % -------------------------------------------------------------------------
 load('reference_path.mat', 'refpath');
 
+% 讀取你從 beta1-5 複製來的參數
+STEP1_VehicleParameters;      % 若此檔會 save vehicleparams.mat
+if exist('vehicleparams.mat','file')
+    load('vehicleparams.mat','params');
+end
+
+% 若 STEP1_VehicleParameters 是 function，改成：
+% params = STEP1_VehicleParameters();
+
+% Pure Pursuit 專用補充
+
 % =========================================================================
 % 控制器與車輛參數設定
 % =========================================================================
 
 params.Ts = 0.05;       % 模擬時間步長 (s)，對應 20 Hz 控制頻率
-params.L  = 2.7;        % 車輛軸距 (m)，Bicycle Model 幾何參數
+params.L  = params.L1;
 
 % --- Pure Pursuit 前視距離參數 ---
 % Ld 公式：Ld = Ld0 + kv*v - kappa_gain*kappa
@@ -153,10 +163,17 @@ refpath.s_arc = s_arc;          % 弧長累積值 (m)
 % 步驟六：初始化車輛狀態
 % 車輛初始狀態設定在路徑起點
 % =========================================================================
-x   = refpath.x(1);           % 初始 x 位置 (m)
-y   = refpath.y(1);           % 初始 y 位置 (m)
-yaw = refpath.phi(1);         % 初始航向角 (rad)
-v   = refpath.v_profile(1);   % 初始速度 (m/s)
+x0   = refpath.x(1);          % tractor rear axle or control point
+y0   = refpath.y(1);
+yaw0 = refpath.phi(1);        % tractor heading
+yaw1 = refpath.phi(1);        % trailer heading, 初始對齊
+v    = refpath.v_profile(1);
+
+% 初始 hitch / trailer axle
+xh = x0 - params.M1 * cos(yaw0);
+yh = y0 - params.M1 * sin(yaw0);
+x1 = xh - params.L2 * cos(yaw1);
+y1 = yh - params.L2 * sin(yaw1);
 
 % 模擬總步數（最多 3000 步，或路徑長度，取較小值）
 Nsim = min(length(refpath.x), 3000);
@@ -180,6 +197,27 @@ hist.cte        = zeros(Nsim,1);  % 橫向追蹤誤差 CTE (m)
 hist.he         = zeros(Nsim,1);  % 航向誤差 (rad)
 hist.kappa      = zeros(Nsim,1);  % 當步曲率指令 (1/m)
 hist.a_lat      = zeros(Nsim,1);  % 當步側向加速度 (m/s²)
+
+hist.x0         = zeros(Nsim,1);
+hist.y0         = zeros(Nsim,1);
+hist.yaw0       = zeros(Nsim,1);
+hist.x1         = zeros(Nsim,1);
+hist.y1         = zeros(Nsim,1);
+hist.yaw1       = zeros(Nsim,1);
+hist.xh         = zeros(Nsim,1);
+hist.yh         = zeros(Nsim,1);
+
+hist.v          = zeros(Nsim,1);
+hist.delta      = zeros(Nsim,1);
+hist.omega      = zeros(Nsim,1);
+hist.idx_target = zeros(Nsim,1);
+hist.idx_near   = zeros(Nsim,1);
+hist.Ld         = zeros(Nsim,1);
+hist.alpha      = zeros(Nsim,1);
+hist.cte        = zeros(Nsim,1);
+hist.he         = zeros(Nsim,1);
+hist.kappa      = zeros(Nsim,1);
+hist.a_lat      = zeros(Nsim,1);
 
 % =========================================================================
 % 步驟七：主模擬迴圈（Closed-Loop Bicycle Model Simulation）
