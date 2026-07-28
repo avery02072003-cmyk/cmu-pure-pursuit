@@ -112,7 +112,7 @@ ty = refpath.y(idx_target);  % 目標點 y (m)
 % -------------------------------------------------------------------------
 alpha = atan2(ty - y, tx - x) - yaw;           % 目標點方位角誤差
 alpha = atan2(sin(alpha), cos(alpha));          % 正規化到 (-π, π)
-delta_pp = atan2(2 * params.L * sin(alpha), Ld); % Pure Pursuit 幾何公式
+delta_pp = atan2(2 * params.L1 * sin(alpha), Ld); % Pure Pursuit 幾何公式
 
 % -------------------------------------------------------------------------
 % 步驟七：估計目標點的局部切線方向（用於航向回授）
@@ -155,13 +155,13 @@ delta = max(-delta_max_phys, min(delta, delta_max_phys));
 % 即使 delta 在物理範圍內，也要確保 |v²·kappa| ≤ a_lat_max
 % 若超出，反推出允許的最大 kappa，重新計算 delta
 % -------------------------------------------------------------------------
-kappa_cmd = tan(delta) / params.L;    % 由轉向角計算曲率指令
+kappa_cmd = tan(delta) / params.L1;    % 由轉向角計算曲率指令
 a_lat_cmd  = v^2 * kappa_cmd;         % 估算側向加速度
 
 if abs(a_lat_cmd) > params.a_lat_max
     % 超出限制：反推最大允許曲率，再換算回轉向角
     kappa_limited = sign(a_lat_cmd) * params.a_lat_max / max(v^2, 1e-3);
-    delta = atan(kappa_limited * params.L);  % 換算回轉向角
+    delta = atan(kappa_limited * params.L1);  % 換算回轉向角
 end
 
 % 再次截斷確保物理限制（防止 atan 結果超出 ±35°）

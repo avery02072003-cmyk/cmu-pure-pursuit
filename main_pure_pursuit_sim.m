@@ -277,7 +277,7 @@ for k = 1:Nsim
     he = atan2(sin(yaw - yaw_ref), cos(yaw - yaw_ref));
 
     % --- 計算本步側向加速度（用於記錄）---
-    kappa_now = tan(delta) / params.L;  % 由轉向角估算曲率
+    kappa_now = tan(delta) / params.L1;  % 由轉向角估算曲率
     a_lat_now = v^2 * kappa_now;        % 側向加速度 = v² · kappa
 
    % --- Tractor 更新 ---
@@ -306,9 +306,6 @@ for k = 1:Nsim
     y1 = yh - params.L2 * sin(yaw1);
 
     % --- 記錄本步所有狀態 ---
-    hist.x(k)          = x;
-    hist.y(k)          = y;
-    hist.yaw(k)        = yaw;
     hist.v(k)          = v;
     hist.delta(k)      = delta;
     hist.idx_target(k) = idx_target;
