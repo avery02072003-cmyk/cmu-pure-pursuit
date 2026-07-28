@@ -169,8 +169,8 @@ v    = refpath.v_profile(1);
 % 初始 hitch / trailer axle
 xh = x0 - params.M1 * cos(yaw0);
 yh = y0 - params.M1 * sin(yaw0);
-x1 = xh - params.d_hitch2axle * cos(yaw1);
-y1 = yh - params.d_hitch2axle * sin(yaw1);
+x1 = xh - params.L2 * cos(yaw1);
+y1 = yh - params.L2 * sin(yaw1);
 
 % 模擬總步數（最多 3000 步，或路徑長度，取較小值）
 Nsim = min(length(refpath.x), 3000);
@@ -282,19 +282,15 @@ for k = 1:Nsim
 
     % --- Trailer 航向更新（off-axle hitch 方程）---
     % omega1 = (v/L1)*tan(delta)  →  tractor yaw rate
-    omega1 = (v / params.L1) * tan(delta);
-    % trailer yaw rate：由 hitch 速度約束推導
-    % d(yaw1)/dt = (v*cos(yaw0-yaw1) + M1*omega1*sin(yaw0-yaw1)) / L2 ...
-    %              - (params.d / L2) * omega1   % d = off-axle 距離（若有）
-    beta_hitch = yaw0 - yaw1;   % hitch angle
-    % 改後
-    yaw1_dot = (v * cos(beta_hitch) + params.M1 * omega1 * sin(beta_hitch)) / params.d_hitch2axle;
-    yaw1 = yaw1 + yaw1_dot * params.Ts;
+    omega1 = (v / params.L1) * tan(delta);   % tractor yaw rate
+    dphi = (v / params.L2) * sin(yaw0 - yaw1) ...
+        - (params.M1 / params.L2) * omega1 * cos(yaw0 - yaw1);
+    yaw1 = yaw1 + dphi * params.Ts;
     yaw1 = atan2(sin(yaw1), cos(yaw1));
 
     % --- Trailer 軸中心更新 ---
-    x1 = xh - params.d_hitch2axle * cos(yaw1);
-    y1 = yh - params.d_hitch2axle * sin(yaw1);
+    x1 = xh - params.L2 * cos(yaw1);
+    y1 = yh - params.L2 * sin(yaw1);
     % --- 記錄本步所有狀態 ---
     hist.v(k)          = v;
     hist.delta(k)      = delta;
