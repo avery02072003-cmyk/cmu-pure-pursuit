@@ -20,6 +20,10 @@ params.M1 = 1.0;        % [m] 鉸接點偏置
 params.L2 = 10.0;       % [m] 貨櫃長度
 params.w_trailer = 2.6; % [m] 貨櫃寬度
 
+% 在 STEP1_VehicleParameters.m 補這行
+params.d_hitch2axle = 7.5;   % hitch 點到 trailer 後軸的距離 (m)
+                              % 通常 = L2 * 0.75，視實際車型調整
+
 % [視覺化參數]
 params.tractor_length = params.L1 + 1.5;
 params.trailer_length = params.L2 + 2.0;

@@ -287,14 +287,14 @@ for k = 1:Nsim
     % d(yaw1)/dt = (v*cos(yaw0-yaw1) + M1*omega1*sin(yaw0-yaw1)) / L2 ...
     %              - (params.d / L2) * omega1   % d = off-axle 距離（若有）
     beta_hitch = yaw0 - yaw1;   % hitch angle
-    yaw1_dot = (v * cos(beta_hitch) + params.M1 * omega1 * sin(beta_hitch)) / params.L2;
+    % 改後
+    yaw1_dot = (v * cos(beta_hitch) + params.M1 * omega1 * sin(beta_hitch)) / params.d_hitch2axle;
     yaw1 = yaw1 + yaw1_dot * params.Ts;
     yaw1 = atan2(sin(yaw1), cos(yaw1));
 
     % --- Trailer 軸中心更新 ---
-    x1 = xh - params.L2 * cos(yaw1);
-    y1 = yh - params.L2 * sin(yaw1);
-
+    x1 = xh - params.d_hitch2axle * cos(yaw1);
+    y1 = yh - params.d_hitch2axle * sin(yaw1);
     % --- 記錄本步所有狀態 ---
     hist.v(k)          = v;
     hist.delta(k)      = delta;
