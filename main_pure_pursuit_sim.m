@@ -28,20 +28,13 @@ clear; clc; close all;
 % -------------------------------------------------------------------------
 load('reference_path.mat', 'refpath');
 
-% --- 載入聯結車幾何參數（必須在其他 params 設定之前）---
-STEP1_VehicleParameters;
-if exist('vehicleparams.mat','file')
-    load('vehicleparams.mat','params');
-end
-% 確認 L1 存在後才能相容賦值
+% 直接載入已存好的參數，不要呼叫 STEP1（它有 clear 會清掉 refpath）
+load('vehicle_params.mat', 'params');
+
 if ~isfield(params,'L1')
-    error('STEP1_VehicleParameters 沒有定義 params.L1，請確認檔案正確');
+    error('vehicle_params.mat 沒有 params.L1');
 end
 
-% 若 STEP1_VehicleParameters 是 function，改成：
-% params = STEP1_VehicleParameters();
-
-% Pure Pursuit 專用補充
 
 % =========================================================================
 % 控制器與車輛參數設定
