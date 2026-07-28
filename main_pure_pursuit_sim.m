@@ -181,9 +181,6 @@ idx_prev = 1;
 % =========================================================================
 % 初始化歷史記錄結構（儲存每步模擬結果，用於事後分析與繪圖）
 % =========================================================================
-hist.x          = zeros(Nsim,1);  % 車輛 x 軌跡 (m)
-hist.y          = zeros(Nsim,1);  % 車輛 y 軌跡 (m)
-hist.yaw        = zeros(Nsim,1);  % 車輛航向角 (rad)
 hist.v          = zeros(Nsim,1);  % 車輛速度 (m/s)
 hist.delta      = zeros(Nsim,1);  % 前輪轉向角指令 (rad)
 hist.idx_target = zeros(Nsim,1);  % 每步的 look-ahead 目標點索引
@@ -255,8 +252,8 @@ for k = 1:Nsim
     y_ref   = refpath.y(idx_near);    % 最近參考點 y 座標
     yaw_ref = refpath.phi(idx_near);  % 最近參考點航向角
 
-    dx = x - x_ref;  % 車輛相對參考點的 x 偏移
-    dy = y - y_ref;  % 車輛相對參考點的 y 偏移
+    dx = x0 - x_ref;  % 車輛相對參考點的 x 偏移
+    dy = y0 - y_ref;  % 車輛相對參考點的 y 偏移
 
     % 橫向追蹤誤差 CTE（Lateral Error）
     % 定義：車輛位置在路徑法線方向的投影距離
@@ -267,7 +264,7 @@ for k = 1:Nsim
     % 航向誤差 he（Heading Error）
     % 定義：車輛航向角與參考點切線方向的夾角
     % 使用 atan2(sin, cos) 確保結果在 (-π, π) 範圍內
-    he = atan2(sin(yaw - yaw_ref), cos(yaw - yaw_ref));
+    he = atan2(sin(yaw0 - yaw_ref), cos(yaw0 - yaw_ref));
 
     % --- 計算本步側向加速度（用於記錄）---
     kappa_now = tan(delta) / params.L1;  % 由轉向角估算曲率
@@ -328,9 +325,14 @@ end
 % --- 圖一：路徑追蹤結果 ---
 figure;
 plot(refpath.x, refpath.y, 'r--', 'LineWidth', 1.5); hold on;  % 參考路徑（紅虛線）
-plot(hist.x, hist.y, 'b-', 'LineWidth', 1.5);                  % 車輛軌跡（藍實線）
+
+% 改成（畫 tractor 軌跡）
+plot(hist.x0, hist.y0, 'b-', 'LineWidth', 1.5);
+% 加上 trailer 軌跡
+plot(hist.x1, hist.y1, 'g-', 'LineWidth', 1.2);
+
 axis equal; grid on;
-legend('Reference Path', 'Pure Pursuit Tracking');
+legend('Reference Path', 'Tractor', 'Trailer');
 title('Pure Pursuit Tracking Result');
 
 % --- 圖二：轉向角指令歷程 ---
