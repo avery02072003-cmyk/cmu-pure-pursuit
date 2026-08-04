@@ -79,3 +79,12 @@ function v_profile = compute_v_profile(kappa, params)
         v_profile(i) = min(v_profile(i), v_allow);
     end
 end
+
+function wp_out = shift_waypoints_lateral(wp, d)
+    dx = gradient(wp(:,1));
+    dy = gradient(wp(:,2));
+    heading = atan2(dy, dx);
+    nx = -sin(heading);
+    ny = cos(heading);
+    wp_out = [wp(:,1) + d*nx, wp(:,2) + d*ny];
+end
