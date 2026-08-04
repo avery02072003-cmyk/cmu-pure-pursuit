@@ -368,6 +368,10 @@ end
 % 存模擬結果給 STEP4_ETS2_Animation_MultiView.m
 results.hist = hist;
 results.ts   = (0:Nsim-1)' * params.Ts;
+results.gps_wp = gps_wp;                  % GPS waypoint（黑點）
+results.path_candidates = path_candidates; % 5 條候選路徑
+results.refpath = refpath;                 % 母路徑
+results.params = params;                   % 動畫需要車輛尺寸等參數
 save('simulation_results.mat', 'results');
 fprintf('✓ simulation_results.mat 已儲存\n');
 
