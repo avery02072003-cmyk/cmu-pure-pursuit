@@ -157,14 +157,26 @@ refpath.v_profile = v_profile;  % 最終速度剖面 (m/s)
 refpath.s_arc = s_arc;          % 弧長累積值 (m)
 
 % =========================================================================
+% 步驟 5.5：生成多條候選路徑（從 GPS waypoints）
+% =========================================================================
+% 將 refpath 的代表點抽稀為 GPS waypoints
+stride = 50;  % 每 50 點取一個 waypoint
+gps_wp = [refpath.x(1:stride:end), refpath.y(1:stride:end)];
+path_candidates = my_multi_path(gps_wp, params.N_paths, params);
+
+% 初始選擇中間那條（最接近原始路徑）
+active_path_idx = ceil(params.N_paths / 2);
+refpath_active  = path_candidates{active_path_idx};
+
+% =========================================================================
 % 步驟六：初始化車輛狀態
 % 車輛初始狀態設定在路徑起點
 % =========================================================================
-x0   = refpath.x(1);          % tractor rear axle or control point
-y0   = refpath.y(1);
-yaw0 = refpath.phi(1);        % tractor heading
-yaw1 = refpath.phi(1);        % trailer heading, 初始對齊
-v    = refpath.v_profile(1);
+x0   = refpath_active.x(1);          % tractor rear axle or control point
+y0   = refpath_active.y(1);
+yaw0 = refpath_active.phi(1);        % tractor heading
+yaw1 = refpath_active.phi(1);        % trailer heading, 初始對齊
+v    = refpath_active.v_profile(1);
 
 % 初始 hitch / trailer axle
 xh = x0 - params.M1 * cos(yaw0);
@@ -191,6 +203,15 @@ hist.cte        = zeros(Nsim,1);  % 橫向追蹤誤差 CTE (m)
 hist.he         = zeros(Nsim,1);  % 航向誤差 (rad)
 hist.kappa      = zeros(Nsim,1);  % 當步曲率指令 (1/m)
 hist.a_lat      = zeros(Nsim,1);  % 當步側向加速度 (m/s²)
+
+hist.theta0     = zeros(Nsim,1);  % 別名，讓 STEP4 animation 相容
+hist.theta1     = zeros(Nsim,1);
+hist.v_cmd      = zeros(Nsim,1);
+hist.omega_cmd  = zeros(Nsim,1);
+hist.err_y      = zeros(Nsim,1);
+hist.Hx         = zeros(Nsim,1);
+hist.Hy         = zeros(Nsim,1);
+hist.active_idx = zeros(Nsim,1);  % 記錄每步實際使用的候選路徑編號
 
 hist.x0         = zeros(Nsim,1);
 hist.y0         = zeros(Nsim,1);
@@ -222,21 +243,38 @@ hist.a_lat      = zeros(Nsim,1);
 %   4. Bicycle Model 狀態更新（Euler 積分）
 %   5. 記錄本步資料
 % =========================================================================
+    % ---- 即時路徑重選（每 T_replan 步一次）----
+    if mod(k, params.T_replan) == 1
+        trailer_state = [x0, y0, yaw0, yaw1, v];
+        best_idx = select_best_path(path_candidates, trailer_state, params);
+        if best_idx ~= active_path_idx
+            active_path_idx = best_idx;
+            refpath_active  = path_candidates{active_path_idx};
+            idx_prev = 1;  % 重置搜尋索引
+        end
+    end
+
+hist.active_idx(k) = active_path_idx;
+
 for k = 1:Nsim
+
+    if idx_prev > length(refpath_active.x) - 5
+        idx_prev = max(1, length(refpath_active.x) - 10);  % 防止越界
+    end
 
     % --- 呼叫 Pure Pursuit 控制器，取得轉向角指令 ---
     % 輸入：當前車輛狀態 (x, y, yaw, v)、參考路徑、參數、上步最近點索引
     % 輸出：delta（轉向角）、idx_target（目標點）、idx_near（最近點）
     %       Ld（前視距離）、alpha（方位角誤差）
     [delta, idx_target, idx_near, Ld, alpha] = ...
-    pure_pursuit_controller(x0, y0, yaw0, v, refpath, params, idx_prev);
+    pure_pursuit_controller(x0, y0, yaw0, v, refpath_active, params, idx_prev);
 
     % 更新搜尋視窗起點為本步最近點（下步搜尋從這裡開始，加速搜尋）
     idx_prev = idx_near;
 
     % --- 縱向速度跟隨控制 ---
     % 從速度規劃取得當前參考速度
-    v_ref_now = refpath.v_profile(idx_near);
+    v_ref_now = refpath_active.v_profile(idx_near);
 
     % 一階速度跟隨：以 a_acc_max / a_dec_max 斜率趨近參考速度
     if v_ref_now > v
@@ -248,9 +286,9 @@ for k = 1:Nsim
     end
 
     % --- 計算追蹤誤差（用於記錄與事後分析）---
-    x_ref   = refpath.x(idx_near);    % 最近參考點 x 座標
-    y_ref   = refpath.y(idx_near);    % 最近參考點 y 座標
-    yaw_ref = refpath.phi(idx_near);  % 最近參考點航向角
+    x_ref   = refpath_active.x(idx_near);    % 最近參考點 x 座標
+    y_ref   = refpath_active.y(idx_near);    % 最近參考點 y 座標
+    yaw_ref = refpath_active.phi(idx_near);  % 最近參考點航向角
 
     dx = x0 - x_ref;  % 車輛相對參考點的 x 偏移
     dy = y0 - y_ref;  % 車輛相對參考點的 y 偏移
@@ -303,6 +341,14 @@ for k = 1:Nsim
     hist.kappa(k)      = kappa_now;
     hist.a_lat(k)      = a_lat_now;
 
+    hist.theta0(k)    = yaw0;
+    hist.theta1(k)    = yaw1;
+    hist.v_cmd(k)     = v;
+    hist.omega_cmd(k) = (v / params.L1) * tan(delta);
+    hist.err_y(k)     = cte;
+    hist.Hx(k)        = xh;
+    hist.Hy(k)        = yh;
+
     hist.x0(k)   = x0;
     hist.y0(k)   = y0;
     hist.yaw0(k) = yaw0;
@@ -318,18 +364,35 @@ end
 % 步驟八：繪圖與輸出結果
 % =========================================================================
 
+% 存模擬結果給 STEP4_ETS2_Animation_MultiView.m
+results.hist = hist;
+results.ts   = (0:Nsim-1)' * params.Ts;
+save('simulation_results.mat', 'results');
+fprintf('✓ simulation_results.mat 已儲存\n');
+
 % --- 圖一：路徑追蹤結果 ---
-figure;
-plot(refpath.x, refpath.y, 'r--', 'LineWidth', 1.5); hold on;  % 參考路徑（紅虛線）
+figure; hold on; axis equal; grid on;
+plot(refpath.x, refpath.y, 'k:', 'LineWidth', 0.8, 'DisplayName', 'Reference (母路徑)');
 
-% 改成（畫 tractor 軌跡）
-plot(hist.x0, hist.y0, 'b-', 'LineWidth', 1.5);
-% 加上 trailer 軌跡
-plot(hist.x1, hist.y1, 'g-', 'LineWidth', 1.2);
+colors = lines(params.N_paths);
+for i = 1:params.N_paths
+    if ~isempty(path_candidates{i})
+        plot(path_candidates{i}.x, path_candidates{i}.y, '--', ...
+             'Color', colors(i,:), 'HandleVisibility', 'off');
+    end
+end
 
-axis equal; grid on;
-legend('Reference Path', 'Tractor', 'Trailer');
-title('Pure Pursuit Tracking Result');
+for i = 1:params.N_paths
+    mask = (hist.active_idx == i);
+    if any(mask)
+        scatter(hist.x0(mask), hist.y0(mask), 10, colors(i,:), 'filled', ...
+            'DisplayName', sprintf('Tractor 使用 Path %d', i));
+    end
+end
+
+plot(hist.x1, hist.y1, 'g-', 'LineWidth', 1.2, 'DisplayName', 'Trailer');
+legend show;
+title('Pure Pursuit Tracking + Path Switching');
 
 % --- 圖二：轉向角指令歷程 ---
 figure;
@@ -376,6 +439,10 @@ grid on;
 xlabel('Step');
 ylabel('Lateral Accel (m/s^2)');
 title('Lateral Acceleration');
+
+switch_count = sum(diff(hist.active_idx) ~= 0);
+fprintf('路徑切換次數 = %d 次（共 %d 步，平均每 %.1f 步切換一次）\n', ...
+    switch_count, Nsim, Nsim/max(switch_count,1));
 
 % --- 終端機輸出最終完整誤差統計 ---
 fprintf('CTE RMS = %.4f m\n',            rms(hist.cte));

@@ -63,6 +63,14 @@ params.mpc.S = [10, 50];     % Slew rate 權重
 params.d0 = params.M1;
 params.T_preview = 1.5;
 
+% --- 8. Multi-path Selector 參數 ---
+params.N_paths       = 5;         % 候選路徑數量
+params.lane_width    = 3.6;       % 可用道路寬度 (m)
+params.T_replan      = 10;        % 每隔幾個 Ts 重新選路 (0.02*10 = 0.2s)
+params.w_cte         = 1.0;       % CTE 成本權重
+params.w_kappa       = 2.0;       % 曲率成本權重（聯結車更重視）
+params.w_hitch       = 5.0;       % 折角成本懲罰（聯結車特有）
+
 % 儲存
 save('vehicle_params.mat', 'params');
 
