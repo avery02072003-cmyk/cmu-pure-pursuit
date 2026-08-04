@@ -1,6 +1,7 @@
 function path_candidates = my_multi_path(gps_waypoints, N_paths, params)
 % gps_waypoints: Nx2 矩陣 [x, y]
 % 回傳 cell array，每個元素是 refpath 結構 (x, y, phi, kappa, v_profile)
+win = 9;   % 供防呆與 compute_kappa 共用的平滑視窗大小
 
 path_candidates = cell(1, N_paths);
 offsets = linspace(-params.lane_width/2, params.lane_width/2, N_paths);
@@ -32,6 +33,11 @@ for i = 1:N_paths
             % Newton-Raphson 不收斂時跳過此段
             continue;
         end
+    end
+
+    if isempty(path_x) || length(path_x) < win
+        path_candidates{i} = [];   % 標記此候選路徑無效
+        continue;   % 跳過這條路徑，直接進入下一個 i
     end
     
     % 存成 refpath 結構

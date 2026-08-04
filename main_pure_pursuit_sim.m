@@ -243,7 +243,10 @@ hist.a_lat      = zeros(Nsim,1);
 %   4. Bicycle Model 狀態更新（Euler 積分）
 %   5. 記錄本步資料
 % =========================================================================
-    % ---- 即時路徑重選（每 T_replan 步一次）----
+
+for k = 1:Nsim
+
+        % ---- 即時路徑重選（每 T_replan 步一次）----
     if mod(k, params.T_replan) == 1
         trailer_state = [x0, y0, yaw0, yaw1, v];
         best_idx = select_best_path(path_candidates, trailer_state, params);
@@ -254,9 +257,7 @@ hist.a_lat      = zeros(Nsim,1);
         end
     end
 
-hist.active_idx(k) = active_path_idx;
-
-for k = 1:Nsim
+    hist.active_idx(k) = active_path_idx;
 
     if idx_prev > length(refpath_active.x) - 5
         idx_prev = max(1, length(refpath_active.x) - 10);  % 防止越界
