@@ -63,7 +63,13 @@ for k = 1:skip:Nsim
     set(h_tractor_body, 'XData', tractor_corners(:,1), 'YData', tractor_corners(:,2));
     set(h_trailer_body, 'XData', trailer_corners(:,1), 'YData', trailer_corners(:,2));
 
-    set(h_hitch_line, 'XData', [x0, Hx, x1], 'YData', [y0, Hy, y1]);
+   set(h_hitch_line, 'XData', [x0, Hx], 'YData', [y0, Hy]);
+
+    if ~exist('h_kingpin', 'var')
+        h_kingpin = plot(ax, NaN, NaN, 'ko', 'MarkerFaceColor','r', ...
+            'MarkerSize', 6, 'DisplayName','Kingpin/Hitch');
+    end
+    set(h_kingpin, 'XData', Hx, 'YData', Hy);
 
     set(h_title, 'String', sprintf('t = %.2f s | Step %d/%d | Active Path %d | v = %.2f m/s', ...
         ts(k), k, Nsim, hist.active_idx(k), hist.v_cmd(k)));
