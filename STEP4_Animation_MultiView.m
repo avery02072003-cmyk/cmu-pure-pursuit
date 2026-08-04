@@ -42,9 +42,10 @@ legend(ax, [h_tractor_trail, h_trailer_trail, h_tractor_body, h_trailer_body, h_
     'Location','best', 'TextColor','w');
 xlabel(ax,'X (m)','Color','w'); ylabel(ax,'Y (m)','Color','w');
 
-% ---- 車輛外框尺寸（簡化為矩形示意）----
-L_tractor = params.L1; W_tractor = 2.2;
-L_trailer = params.L2; W_trailer = 2.4;
+L_tractor = params.tractor_length;
+W_tractor = params.tractor_width;
+L_trailer = params.trailer_length;
+W_trailer = params.trailer_width;
 
 skip = 1;   % 跳幀加速播放，可調整
 playback_speed = 1.0;   % 1.0 = 正常速度；調小這個數字會播更慢，例如 0.3

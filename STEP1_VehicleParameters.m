@@ -30,6 +30,20 @@ params.trailer_length = params.L2 + 2.0;
 params.tractor_width = params.w_tractor;
 params.trailer_width = params.w_trailer;
 
+params.tractor_front_overhang = 1.4;
+params.tractor_rear_overhang  = 0.8;
+params.tractor_length = params.tractor_front_overhang + params.L1 + params.tractor_rear_overhang;
+
+params.trailer_front_overhang = 1.2;
+params.trailer_rear_overhang  = 2.5;
+params.trailer_length = params.trailer_front_overhang + params.L2 + params.trailer_rear_overhang;
+params.trailer_L_total = params.trailer_length;
+
+params.tractor_width = params.w_tractor;
+params.trailer_width = params.w_trailer;
+params.kingpin_to_trailer_front = params.trailer_front_overhang;
+params.kingpin_to_trailer_rear  = params.L2 + params.trailer_rear_overhang;
+
 % --- 2. 運動學限制 (物理天花板) ---
 params.v_max = 50.0;         % [m/s] 物理最高速
 params.v_min = -5.0;         % [m/s] 倒車限速
