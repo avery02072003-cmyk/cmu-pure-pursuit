@@ -16,7 +16,7 @@ function path_candidates = my_multi_path(gps_waypoints, N_paths, params)
         
         % ---- 逐段呼叫 my_path() 連接相鄰 waypoint ----
         path_x = []; path_y = []; path_phi = [];
-        xic = [wp_shifted(1,1), wp_shifted(1,2), phi_wp(1), 0];  % 初始狀態
+        xic = [0, 0, 0, 0];   % 統一從局部原點、局部朝向 0 開始（第一段跟後續段落邏輯一致）
         
         for j = 1:size(wp_shifted,1)-1
         % 世界座標系的原始位移
