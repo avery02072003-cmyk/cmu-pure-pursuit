@@ -66,7 +66,7 @@ function v_profile = compute_v_profile(kappa, params)
     N = length(kappa);
     v_c = sqrt(params.a_lat_max ./ max(abs(kappa), 1e-4));
     v_c = min(v_c, params.v_des);
-    v_c = max(v_c, params.v_min);
+    v_c = max(v_c, params.v_profile_min);
     v_profile = v_c;
     % backward pass
     for i = N-1:-1:1

@@ -35,6 +35,7 @@ params.v_max = 50.0;         % [m/s] 物理最高速
 params.v_min = -5.0;         % [m/s] 倒車限速
 params.w_max = deg2rad(60);  % [rad/s] 角速度限制）
 params.phi_max = deg2rad(85);% [rad] 最大折疊角
+params.v_profile_min = 1.0;   % 候選路徑/巡航速度剖面下限 (m/s)，與倒車限速 v_min 意義不同
 
 % --- 3. 加速度/Jerk 限制 (新增給 MPC 用) ---
 params.acc_max = 1.0;        % [m/s^2] 最大加速度
@@ -70,6 +71,12 @@ params.T_replan      = 10;        % 每隔幾個 Ts 重新選路 (0.02*10 = 0.2s
 params.w_cte         = 1.0;       % CTE 成本權重
 params.w_kappa       = 2.0;       % 曲率成本權重（聯結車更重視）
 params.w_hitch       = 5.0;       % 折角成本懲罰（聯結車特有）
+
+% --- 9. 候選路徑速度規劃參數（給 my_multi_path/compute_v_profile 用）---
+params.v_des     = 6.0;   % 期望巡航速度 (m/s)
+params.a_lat_max = 2.0;   % 側向加速度限制 (m/s^2)
+params.a_acc_max = 1.0;   % 縱向加速度上限 (m/s^2)
+params.a_dec_max = 1.5;   % 縱向減速度上限 (m/s^2)
 
 % 儲存
 save('vehicle_params.mat', 'params');
