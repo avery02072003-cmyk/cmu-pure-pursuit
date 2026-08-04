@@ -14,13 +14,21 @@ p=[0 0 0 arc];
 x_end = my_endpoint(p, k);
 
 for i=1:500
-delta_x=x_dest-x_end;
-J_M= My_Jacobian( N, k, p );
-iJ_M=pinv(J_M);
-temp=iJ_M*delta_x;
-delta_p=temp';
-p=p+delta_p;
-x_end = my_endpoint(p, k);
+    delta_x = x_dest - x_end;
+    
+    if norm(delta_x) < 1e-6
+        break;   % 已收斂，提早結束
+    end
+    if any(isnan(p)) || any(abs(p) > 1e6)
+        error('my_path: Newton-Raphson 發散，此段路徑不可行');
+    end
+    
+    J_M  = My_Jacobian( N, k, p );
+    iJ_M = pinv(J_M);
+    temp = iJ_M * delta_x;
+    delta_p = temp';
+    p = p + delta_p;
+    x_end = my_endpoint(p, k);
 end
 
 delta_x=x_dest-x_end;
