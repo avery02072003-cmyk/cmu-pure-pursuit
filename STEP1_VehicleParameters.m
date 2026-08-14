@@ -86,6 +86,17 @@ params.w_cte         = 1.0;       % CTE 成本權重
 params.w_kappa       = 2.0;       % 曲率成本權重（聯結車更重視）
 params.w_hitch       = 5.0;       % 折角成本懲罰（聯結車特有）
 
+% --- 8.1 即時局部路徑生成參數（generate_local_paths 用）---
+params.local_horizon_m    = 35;   % 每次 replan 往前取的局部路線窗口長度 (m)
+params.local_wp_spacing   = 1.5;  % 局部窗口 waypoint 抽稀間距 (m)
+params.local_sample_stride = 25;  % my_path() 每段 1000 取樣點的降採樣間隔
+
+% --- 8.2 鉸接角安全機制參數（compute_hitch_speed_cap / hitch_angle_governor 用）---
+params.hitch_speed_cap_frac = 0.70;  % phi_max 的比例，以下不限速（規劃階段的曲率預估限速）
+params.hitch_speed_cap_gain = 4.0;   % 超過門檻後的降速強度
+params.hitch_gov_warn_frac  = 0.60;  % phi_max 的比例，超過開始即時降速（安全網）
+params.hitch_gov_hard_frac  = 0.90;  % phi_max 的比例，到這裡降到最低速
+
 % --- 9. 候選路徑速度規劃參數（給 my_multi_path/compute_v_profile 用）---
 params.v_des     = 6.0;   % 期望巡航速度 (m/s)
 params.a_lat_max = 2.0;   % 側向加速度限制 (m/s^2)

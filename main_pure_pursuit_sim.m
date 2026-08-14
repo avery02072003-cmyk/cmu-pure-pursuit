@@ -157,12 +157,15 @@ refpath.v_profile = v_profile;  % 最終速度剖面 (m/s)
 refpath.s_arc = s_arc;          % 弧長累積值 (m)
 
 % =========================================================================
-% 步驟 5.5：生成多條候選路徑（從 GPS waypoints）
+% 步驟 5.5：初始候選路徑（即時局部生成，以母路徑起點為初始錨點）
 % =========================================================================
-% 將 refpath 的代表點抽稀為 GPS waypoints
-stride = 50;  % 每 50 點取一個 waypoint
+% gps_wp 只留給 STEP4 動畫疊圖顯示用；候選路徑本身改由 generate_local_paths
+% 在模擬迴圈中每次 replan 都以車輛「當前位置」重新生成（見步驟七內的即時路徑重選）
+stride = 50;  % 每 50 點取一個 waypoint（僅供顯示用）
 gps_wp = [refpath.x(1:stride:end), refpath.y(1:stride:end)];
-path_candidates = my_multi_path(gps_wp, params.N_paths, params);
+
+seed_state = [refpath.x(1), refpath.y(1), refpath.phi(1)];
+path_candidates = generate_local_paths(seed_state, refpath, params, params.N_paths, []);
 
 % 初始選擇中間那條（最接近原始路徑）
 active_path_idx = ceil(params.N_paths / 2);
@@ -234,6 +237,10 @@ hist.he         = zeros(Nsim,1);
 hist.kappa      = zeros(Nsim,1);
 hist.a_lat      = zeros(Nsim,1);
 
+hist.hitch_now       = zeros(Nsim,1);  % 即時鉸接角（已 wrap，rad）
+hist.gov_active       = false(Nsim,1); % 本步鉸接角安全網是否介入降速
+hist.local_anchor_err = nan(Nsim,1);   % 驗收用：replan 當步「候選路徑起點（母路徑最近點）」與車輛實際位置的差距 (m)，量級應接近當下 CTE
+
 % =========================================================================
 % 步驟七：主模擬迴圈（Closed-Loop Bicycle Model Simulation）
 % 每步流程：
@@ -244,17 +251,34 @@ hist.a_lat      = zeros(Nsim,1);
 %   5. 記錄本步資料
 % =========================================================================
 
+% 逐次 replan 的候選路徑歷史紀錄（供 STEP4 動畫即時重畫候選路徑用）。
+% 只存 x/y（不存 phi/kappa/v_profile），控制檔案大小。
+replan_log = struct('step', {}, 'active_idx', {}, 'cand_x', {}, 'cand_y', {});
+
 for k = 1:Nsim
 
-        % ---- 即時路徑重選（每 T_replan 步一次）----
+        % ---- 即時局部路徑重生成 + 重選（每 T_replan 步一次）----
     if mod(k, params.T_replan) == 1
+        state = [x0, y0, yaw0];
+        path_candidates = generate_local_paths(state, refpath, params, params.N_paths, []);
+
         trailer_state = [x0, y0, yaw0, yaw1, v];
         best_idx = select_best_path(path_candidates, trailer_state, params);
-        if best_idx ~= active_path_idx
-            active_path_idx = best_idx;
-            refpath_active  = path_candidates{active_path_idx};
-            idx_prev = 1;  % 重置搜尋索引
+        active_path_idx = best_idx;
+        refpath_active  = path_candidates{active_path_idx};
+        idx_prev = 1;   % 候選路徑每次都是全新陣列，索引不再跨 tick 延續，必須無條件重置
+
+        hist.local_anchor_err(k) = hypot(refpath_active.x(1)-x0, refpath_active.y(1)-y0);
+
+        cand_x = cell(1, params.N_paths); cand_y = cell(1, params.N_paths);
+        for ci = 1:params.N_paths
+            if ~isempty(path_candidates{ci})
+                cand_x{ci} = path_candidates{ci}.x;
+                cand_y{ci} = path_candidates{ci}.y;
+            end
         end
+        replan_log(end+1) = struct('step', k, 'active_idx', active_path_idx, ...
+            'cand_x', {cand_x}, 'cand_y', {cand_y}); %#ok<SAGROW>
     end
 
     hist.active_idx(k) = active_path_idx;
@@ -276,6 +300,9 @@ for k = 1:Nsim
     % --- 縱向速度跟隨控制 ---
     % 從速度規劃取得當前參考速度
     v_ref_now = refpath_active.v_profile(idx_near);
+
+    % --- 鉸接角安全網：逼近 phi_max 時漸進降速（只降速，不動轉向）---
+    [v_ref_now, gov_active, hitch_now] = hitch_angle_governor(v_ref_now, yaw0, yaw1, params);
 
     % 一階速度跟隨：以 a_acc_max / a_dec_max 斜率趨近參考速度
     if v_ref_now > v
@@ -342,6 +369,9 @@ for k = 1:Nsim
     hist.kappa(k)      = kappa_now;
     hist.a_lat(k)      = a_lat_now;
 
+    hist.hitch_now(k)  = hitch_now;
+    hist.gov_active(k) = gov_active;
+
     hist.theta0(k)    = yaw0;
     hist.theta1(k)    = yaw1;
     hist.v_cmd(k)     = v;
@@ -377,7 +407,8 @@ fprintf('L2 幾何誤差範圍: [%.6f, %.6f] m\n', min(err_L2), max(err_L2));
 results.hist = hist;
 results.ts   = (0:Nsim-1)' * params.Ts;
 results.gps_wp = gps_wp;                  % GPS waypoint（黑點）
-results.path_candidates = path_candidates; % 5 條候選路徑
+results.path_candidates = path_candidates; % 最後一次 replan 的 5 條候選路徑（靜態預覽/相容用）
+results.replan_log = replan_log;           % 每次 replan 的候選路徑歷史，供動畫即時重畫用
 results.refpath = refpath;                 % 母路徑
 results.params = params;                   % 動畫需要車輛尺寸等參數
 save('simulation_results.mat', 'results');

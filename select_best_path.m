@@ -5,7 +5,8 @@ function best_idx = select_best_path(path_candidates, trailer_state, params)
     
     yaw0 = trailer_state(3);
     yaw1 = trailer_state(4);
-    current_hitch = abs(yaw0 - yaw1);
+    d_hitch = yaw0 - yaw1;
+    current_hitch = abs(atan2(sin(d_hitch), cos(d_hitch)));   % 正確 wrap 到 (-pi, pi]
     
     for i = 1:N
         p = path_candidates{i};
@@ -13,7 +14,10 @@ function best_idx = select_best_path(path_candidates, trailer_state, params)
         
         cte  = compute_cte(p, trailer_state);
         feas = check_hitch_angle(p, trailer_state, params);
-        curv = mean(abs(p.kappa));   % 用平均曲率（比 max 穩定）
+        % 用「最大曲率」而非平均曲率：貨櫃偏移量主要由單一最尖銳彎道的瞬時曲率決定，
+        % 用平均值會把整條候選路徑唯一的尖峰稀釋掉，導致 scorer 分不出哪條候選路徑
+        % 在最緊的彎道能讓聯結車少甩尾（也就是無法自動選出「彎道外側、曲率較小」的那條）
+        curv = max(abs(p.kappa));
         
         % 聯結角改善項：選能讓折角回正的路徑
         hitch_penalty = current_hitch * params.w_hitch;
@@ -48,12 +52,17 @@ function ok = check_hitch_angle(path, trailer_state, params)
 % 用路徑最大曲率估算折角 (快速近似)
     yaw0 = trailer_state(3);
     yaw1 = trailer_state(4);
-    hitch_angle = abs(yaw0 - yaw1);
+    d_hitch = yaw0 - yaw1;
+    hitch_angle = abs(atan2(sin(d_hitch), cos(d_hitch)));   % 正確 wrap 到 (-pi, pi]
     
     % 路徑最大曲率對應的最大聯結角估算
     max_kappa = max(abs(path.kappa));
-    % 幾何近似：max_hitch ≈ asin(L2 * max_kappa)
-    predicted_max_hitch = asin(min(params.L2 * max_kappa, 0.999));
+    % 幾何近似（穩態圓周運動）：max_hitch ≈ atan(L2 * max_kappa)
+    % 注意：不能用 asin(L2*max_kappa) — 當 L2*kappa 接近/超過 1（本車 L2=7.5m、
+    % 物理曲率上限 kmax=tan(35°)/L1≈0.156 時 L2*kmax≈1.17>1）asin 會直接飽和到
+    % 接近 90°，導致幾乎任何曲率都被誤判為不可行、被迫每次都退回置中路徑。
+    % atan() 對任意輸入都平滑，不會有這個問題。
+    predicted_max_hitch = atan(params.L2 * max_kappa);
     
     ok = (hitch_angle < params.phi_max) && ...
          (predicted_max_hitch < params.phi_max * 0.85);  % 85% 安全餘量
