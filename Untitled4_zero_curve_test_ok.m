@@ -4,8 +4,6 @@ clear all
 close all
 clc
 
-%%%%%%%%%   �f�ɰw �޳��y�D  %%%%%%%%%%%%%%%
-
 points=360*3;
 t=linspace(0,pi,points);
 a=15;

@@ -5,8 +5,6 @@ clear all
 close all
 clc
 
-%%%%%%%%%   �f�ɰw ���έy�D %%%%%%%%%%%%%%%
-
 sample=360*7;
 
 t=linspace(0,2*pi,sample);

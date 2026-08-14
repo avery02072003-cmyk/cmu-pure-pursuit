@@ -1,19 +1,53 @@
 % =========================================================================
 % main_pure_pursuit_sim.m
-% Pure Pursuit 追蹤模擬主程式
+% Pure Pursuit + 聯結車（tractor-trailer）追蹤模擬主程式
 %
-% 功能說明：
-%   1. 載入參考路徑 (reference_path.mat)
-%   2. 估算路徑曲率並進行平滑化
-%   3. 依側向加速度限制計算曲率限速
-%   4. 執行 forward-backward speed pass（縱向加減速約束）
-%   5. 執行 Bicycle Model 閉迴路追蹤模擬
-%   6. 輸出追蹤誤差指標並繪圖
+% 這是整個系統的「總指揮」，把所有模組串起來執行一次完整模擬：
+%
+%   STEP1_VehicleParameters.m（先執行，產生 vehicle_params.mat）
+%           │
+%           ▼
+%   載入 reference_path.mat（母路徑）+ vehicle_params.mat（參數）
+%           │
+%           ▼
+%   估算母路徑曲率、規劃母路徑速度剖面（曲率限速 + forward/backward pass）
+%           │
+%           ▼
+%   ┌─────────────────────────────────────────────────────────┐
+%   │ 主模擬迴圈（每步 Ts=0.05s，共 Nsim 步）：                    │
+%   │                                                            │
+%   │  每 T_replan 步（0.5s）：                                   │
+%   │    generate_local_paths() 以車輛「當下位置」為錨點，          │
+%   │    即時生成 N_paths 條局部候選路徑（見該檔頭「舊架構 vs      │
+%   │    新架構」完整說明）                                        │
+%   │        │                                                   │
+%   │        ▼                                                   │
+%   │    select_best_path() 依橫向誤差/曲率/鉸接角評分選出最佳路徑   │
+%   │                                                            │
+%   │  每步：                                                     │
+%   │    pure_pursuit_controller() 算出轉向角 delta                │
+%   │        │                                                   │
+%   │        ▼                                                   │
+%   │    hitch_angle_governor() 即時鉸接角安全網（必要時降速）       │
+%   │        │                                                   │
+%   │        ▼                                                   │
+%   │    Bicycle Model（拖車頭）+ Off-Axle Hitch Model（貨櫃）      │
+%   │    歐拉積分更新車輛狀態                                       │
+%   │        │                                                   │
+%   │        ▼                                                   │
+%   │    記錄本步狀態到 hist                                       │
+%   └─────────────────────────────────────────────────────────┘
+%           │
+%           ▼
+%   儲存 simulation_results.mat（供 STEP4_Animation_MultiView.m 動畫用）
+%   繪圖 + 輸出追蹤誤差統計
 %
 % 對應論文元素：
 %   - 側向加速度約束：v_curve = sqrt(a_lat_max / kappa)
 %   - 縱向加速度約束：forward-backward speed pass
 %   - 追蹤控制器：pure_pursuit_controller.m
+%   - 聯結車運動學：off-axle hitch trailer model（見下方「Trailer 航向
+%     更新」段落的完整推導）
 %
 % =========================================================================
 
@@ -224,18 +258,7 @@ hist.y1         = zeros(Nsim,1);
 hist.yaw1       = zeros(Nsim,1);
 hist.xh         = zeros(Nsim,1);
 hist.yh         = zeros(Nsim,1);
-
-hist.v          = zeros(Nsim,1);
-hist.delta      = zeros(Nsim,1);
-hist.omega      = zeros(Nsim,1);
-hist.idx_target = zeros(Nsim,1);
-hist.idx_near   = zeros(Nsim,1);
-hist.Ld         = zeros(Nsim,1);
-hist.alpha      = zeros(Nsim,1);
-hist.cte        = zeros(Nsim,1);
-hist.he         = zeros(Nsim,1);
-hist.kappa      = zeros(Nsim,1);
-hist.a_lat      = zeros(Nsim,1);
+hist.omega      = zeros(Nsim,1);   % （目前未賦值，保留欄位相容舊版分析腳本）
 
 hist.hitch_now       = zeros(Nsim,1);  % 即時鉸接角（已 wrap，rad）
 hist.gov_active       = false(Nsim,1); % 本步鉸接角安全網是否介入降速
@@ -346,13 +369,49 @@ for k = 1:Nsim
     xh = x0 - params.M1 * cos(yaw0);
     yh = y0 - params.M1 * sin(yaw0);
 
-    % --- Trailer 航向更新（off-axle hitch 方程）---
-    % omega1 = (v/L1)*tan(delta)  →  tractor yaw rate
-    omega1 = (v / params.L1) * tan(delta);   % tractor yaw rate
+    % =====================================================================
+    % --- Trailer 航向更新（off-axle hitch 運動學方程）完整推導 ---
+    %
+    % 目標：求貨櫃航向角速率 omega_trailer = dyaw1/dt。
+    %
+    % 第一步：鉸接點 (xh,yh) 的速度，由「拖車頭剛體運動」決定。
+    %   鉸接點在拖車頭後軸「後方」M1 處，相對後軸的位置向量
+    %   r = (-M1*cos(yaw0), -M1*sin(yaw0))。剛體上一點的速度 =
+    %   質心（此處取後軸）速度 + 角速度 × 位置向量：
+    %       v_h = [v*cos(yaw0); v*sin(yaw0)] + omega1 × r
+    %   其中 omega1 = (v/L1)*tan(delta) 是拖車頭橫擺角速度（bicycle model）。
+    %   二維外積 omega×(rx,ry) = omega*(-ry, rx)，代入 r 展開後：
+    %       dxh/dt = v*cos(yaw0) + omega1*M1*sin(yaw0)
+    %       dyh/dt = v*sin(yaw0) - omega1*M1*cos(yaw0)
+    %
+    % 第二步：鉸接點同時也被「貨櫃」這個剛體約束住：
+    %   xh = x1 + L2*cos(yaw1), yh = y1 + L2*sin(yaw1)（貨櫃後軸往前 L2 到鉸接點）。
+    %   對時間微分，並假設貨櫃軸心速度 v1 必須沿貨櫃航向方向前進
+    %   （非完整約束，車輪不能側滑）：
+    %       dxh/dt = v1*cos(yaw1) - L2*sin(yaw1)*omega_trailer
+    %       dyh/dt = v1*sin(yaw1) + L2*cos(yaw1)*omega_trailer
+    %
+    % 第三步：兩步驟算出的 dxh/dt、dyh/dt 是同一個鉸接點、必須相等，
+    %   於是得到兩個方程式解 (v1, omega_trailer) 兩個未知數。用旋轉矩陣
+    %   R(yaw1)^T 把方程組解開（等效於將速度投影到貨櫃的縱向/橫向軸）：
+    %       omega_trailer = [-sin(yaw1)*dxh/dt + cos(yaw1)*dyh/dt] / L2
+    %   把第一步算出的 dxh/dt, dyh/dt 代入，用和角公式
+    %   sin(A-B)=sinAcosB-cosAsinB、cos(A-B)=cosAcosB+sinAsinB 化簡
+    %   （A=yaw0, B=yaw1），最終得到：
+    %       omega_trailer = (v/L2)*sin(yaw0-yaw1) - (M1/L2)*omega1*cos(yaw0-yaw1)
+    %
+    %   這正是下面程式碼的 dphi 公式。可以看出：
+    %     - 第一項 (v/L2)*sin(yaw0-yaw1) 是「拖車頭前進、貨櫃被拖著轉正」
+    %       的主要項，折角 (yaw0-yaw1) 越大，貨櫃航向修正得越快；
+    %     - 第二項 -(M1/L2)*omega1*cos(...) 是 off-axle（M1>0）才有的
+    %       修正項，若 M1=0（鉸接點就在後軸上，最簡化的教科書模型），
+    %       這一項會直接消失，方程式退化成最單純的「on-axle」版本。
+    % =====================================================================
+    omega1 = (v / params.L1) * tan(delta);   % 拖車頭橫擺角速度 omega1 = v/L1 * tan(delta)
     dphi = (v / params.L2) * sin(yaw0 - yaw1) ...
         - (params.M1 / params.L2) * omega1 * cos(yaw0 - yaw1);
-    yaw1 = yaw1 + dphi * params.Ts;
-    yaw1 = atan2(sin(yaw1), cos(yaw1));
+    yaw1 = yaw1 + dphi * params.Ts;          % 歐拉積分更新貨櫃航向角
+    yaw1 = atan2(sin(yaw1), cos(yaw1));      % wrap 回 (-pi, pi]
 
     % --- Trailer 軸中心更新 ---
     x1 = xh - params.L2 * cos(yaw1);

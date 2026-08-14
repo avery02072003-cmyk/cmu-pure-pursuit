@@ -31,6 +31,25 @@
 % 對應論文元素：
 %   - 自適應前視距離：Ld = Ld0 + kv*v - kappa_gain*kappa
 %   - 側向加速度硬限制：|v²·kappa_cmd| ≤ a_lat_max
+%
+% delta_pp = atan2(2*L*sin(alpha), Ld) 的幾何推導：
+%   Pure Pursuit 的基本假設是「車輛沿著一個圓弧行駛，剛好通過前方的
+%   look-ahead 目標點」。設這個圓弧半徑為 R，圓心在車輛後軸的垂直
+%   方向上（bicycle model 的轉向幾何：後軸走圓弧、前輪轉角 delta 滿足
+%   R = L/tan(delta)，L 為軸距）。
+%
+%   車輛後軸位置、目標點、圓心三者構成一個等腰三角形（兩股都是半徑
+%   R），目標點到車輛的直線距離就是前視距離 Ld，alpha 是這條直線
+%   相對車輛航向的夾角。用「弦長 - 圓心角」關係（正弦定理）：
+%       Ld = 2*R*sin(alpha)          →  R = Ld / (2*sin(alpha))
+%   （這個關係可以用「圓周角是圓心角一半」的幾何性質，或直接對等腰
+%   三角形做垂直平分線推導得到，是 Pure Pursuit 演算法最核心的一步。）
+%
+%   有了 R，代入 bicycle model 的轉向幾何 R = L/tan(delta)：
+%       tan(delta) = L/R = L * 2*sin(alpha) / Ld = 2*L*sin(alpha) / Ld
+%       delta = atan2(2*L*sin(alpha), Ld)
+%   用 atan2 而不是 atan，是為了正確處理 alpha 為負值（目標點在車輛
+%   右側）時 delta 的正負號與角度範圍。
 % =========================================================================
 function [delta, idx_target, idx_near, Ld, alpha] = pure_pursuit_controller(x, y, yaw, v, refpath, params, idx_prev)
 

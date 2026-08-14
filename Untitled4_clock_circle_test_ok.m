@@ -5,8 +5,6 @@ clear all
 close all
 clc
 
-%%%%%%%%%   180 �� �� 0�� �� �W�b�� concave �꩷���| %%%%%%%%%%%%%%%
-
 points=360*8;
 t=linspace(pi,-pi,points);
 a=25;
