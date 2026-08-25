@@ -91,7 +91,6 @@ x5(i)=(a+5)+a*cos(t(i));   % 底部半圓（圓心 20,-25，半徑 15）
 y5(i)=-25+a*sin(t(i));
 end
 
-
 figure (3)
 hold on
 plot(x0,y0,'b');
@@ -213,6 +212,29 @@ title('Tractor-Trailer Tacking Trajectory','FontSize',18 )
 legend([p1 p2 p3 p4],{'Tractor Waypoint','Trailer Waypoint','Tractor Trajectory','Trailer Trajectory'},'FontSize',18)
 % pause
 end
+
+% ---- 賽道整體放大 TRACK_SCALE 倍（長寬同比例放大）----
+% 目的：原本最緊的彎道半徑只有 15m（實測擬合後約 10m），對這台 L1=4.5m、
+% L2=7.5m 的聯結車來說太緊，貨櫃甩尾會超出車道邊界（見週報第八節分析）。
+%
+% ⚠ 這裡刻意選在「整條路徑逐段擬合完成之後」才做縮放，而不是把縮放
+% 套用在最一開始的賽道幾何定義（半徑 a、直線端點座標）上，兩者數學上
+% 應該等價（曲率多項式擬合問題本身是比例不變的），但實測發現「先放大
+% 座標、再逐段擬合」會讓部分 segment 邊界的 Newton-Raphson 沒辦法在
+% 500 次迭代內收斂到位——因為 my_path.m 的收斂門檻 norm(delta_x)<1e-6
+% 是「絕對誤差」，座標放大 5 倍後，同樣的絕對誤差門檻相當於要求更嚴格
+% 的相對精度，導致部分本來收斂良好的 segment 變得收斂不完全，在拼接處
+% 產生局部倒退的小凹陷（實測：29 段裡有 19 段出現曲率尖峰，|kappa| 最大
+% 到 41，對應轉彎半徑不到 0.03m，明顯不合理）。
+%
+% 改成「先在原始 1 倍尺度完成整條路徑擬合（這個尺度已經過驗證，逐段
+% 都能可靠收斂），最後才把整條密集點雲座標乘以 TRACK_SCALE」，因為
+% 均勻縮放一條曲線，形狀不變、位置座標乘以縮放倍率、航向角不變、
+% 曲率除以縮放倍率——這是單純的幾何縮放關係，不需要重新解任何
+% Newton-Raphson 問題，自然不會有收斂精度隨尺度變差的問題。
+TRACK_SCALE = 5;
+ref_x = ref_x * TRACK_SCALE;
+ref_y = ref_y * TRACK_SCALE;
 
 % ---- 用最終拼接完成的密集路徑點，差分算出每一點的最終航向角 ----
 dx = diff(ref_x);
