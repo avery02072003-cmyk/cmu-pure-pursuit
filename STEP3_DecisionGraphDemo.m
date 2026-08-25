@@ -34,6 +34,28 @@
 %       涵蓋 3 分支情境（中間車道，出現 3 次）、2 分支情境（左右車道，
 %       各出現 2 次）、以及全部 3 種分支類型（straight/change_left/
 %       change_right）。
+%
+% 動畫播放（每一步選定分支之後，不再瞬間跳到終點）：
+%       黑點會沿著選中的分支曲線移動，同時用一條黃色短線標示當下航向，
+%       讓換道時的航向如何隨弧長平滑轉變（lane_change_offset_profile.m
+%       的 dphi_correction，見該檔案檔頭推導）可以直接用肉眼確認是否
+%       平滑、有沒有在 segment 交界處出現轉向不連續的「抽動」。沒被選中
+%       的其餘分支曲線在這段動畫期間維持顯示，方便對照「這是從哪些選項
+%       中選出來的」。
+%
+%       播放節奏跟 STEP4_Animation_MultiView.m 用同一套「固定播放時間格
+%       ＋ playback_speed 縮放」模型（該檔案第 196-197 行的 skip/
+%       playback_speed），而不是逐點播放 chosen.x/y/phi 本身：chosen.x/
+%       y/phi 是 stitch_local_path.m 曲線擬合內部輸出的密集點（動輒
+%       2000+ 點，密度由 Newton-Raphson 擬合品質決定，不是依播放需求
+%       決定），若逐點呼叫 drawnow/pause，即使每次要求的等待時間很短，
+%       數千次呼叫本身的固定開銷疊加起來就會讓畫面明顯卡頓變慢——這是
+%       先前版本「看起來非常慢」的真正原因，不是 pause() 時間算錯。
+%       修正方式：先用 resample_window_by_arclength.m 依弧長等距抽稀成
+%       「播放張數」（由分支總長度 / (v*anim_dt) 決定，車速越快、單一
+%       播放格代表的距離越長，張數越少），只對這些抽稀後的張數逐張呼叫
+%       drawnow/pause，張數跟 STEP4 的畫面更新張數同一數量級（幾十張），
+%       不影響 chosen.x/y/phi 本身的擬合密度。
 % =========================================================================
 
 clear; clc; close all;
@@ -82,12 +104,25 @@ end
 plot(ax, NaN, NaN, '-.', 'Color', [0.9 0.9 0.3], 'LineWidth', 1.4, 'DisplayName', sprintf('車道邊界（每條車道寬 %.1fm）', params.lane_width));
 
 h = init_decision_graph_plot(ax);
+
+% ---- 航向指示線：動畫播放時跟著黑點移動，標示當下航向方向 ----
+% （黃色純粹為了在深色背景、跟分支顏色都對比明顯，不隨分支 type 變色）
+h_heading = plot(ax, NaN, NaN, '-', 'Color', [1 1 0], 'LineWidth', 2.5, 'HandleVisibility', 'off');
+heading_len = 3;   % [m] 航向指示線長度，純視覺化用途，不代表任何物理尺寸
+
 h_title = title(ax, '', 'Color', 'w', 'FontSize', 12);
 legend(ax, 'Location', 'bestoutside', 'TextColor', 'w');
 xlabel(ax, 'X (m)', 'Color', 'w'); ylabel(ax, 'Y (m)', 'Color', 'w');
 
 view_radius = 40;   % 每一步自動縮放到車輛周圍 ±40m 的範圍，方便看清楚分支細節
-pause_sec = 1.5;    % 每個決策點之間的展示停留時間
+pause_sec = 1.5;    % 每個決策點之間的展示停留時間（顯示分支選項時）
+
+% ---- 分支曲線移動動畫的播放節奏（跟 STEP4_Animation_MultiView.m 同一套模型）----
+% anim_dt 是「一張播放畫面代表多少真實秒數」，純粹是這個展示腳本的播放
+% 節奏，跟控制迴圈的 params.Ts（0.02~0.05s，另一回事）無關，也不能直接
+% 拿 params.Ts 用——那樣算出來的播放張數（同一數量級的問題）一樣會太多。
+anim_dt = 0.1;         % [s] 每張播放畫面代表的時間
+playback_speed = 2.0;  % 1.0 = 正常速度；調小這個數字會播更慢，例如 0.5
 
 type_name_zh = struct('straight', '直行', 'change_left', '變換到左車道', 'change_right', '變換到右車道');
 
@@ -112,13 +147,40 @@ for step = 1:numel(demo_lane_sequence)-1
     drawnow;
     pause(pause_sec);
 
-    % ---- 依車道序列挑選這一步要走的分支，把 state 移動到該分支終點 ----
+    % ---- 依車道序列挑選這一步要走的分支 ----
     chosen = branches([branches.to_lane_id] == next_lane_id);
     if isempty(chosen)
         error('STEP3_DecisionGraphDemo: 車道序列第 %d→%d 步不合法（不在允許的分支範圍內）', ...
             current_lane_id, next_lane_id);
     end
     chosen = chosen(1);
+
+    % ---- 動畫播放：黑點真正沿著選中的分支曲線移動，不是瞬間跳到終點 ----
+    % 先依弧長把 chosen.x/y/phi（曲線擬合內部密集輸出）抽稀成播放張數，
+    % 張數由「分支總長度 / (目前車速 * anim_dt)」決定，車速越快單張代表
+    % 的距離越長、張數越少（跟 STEP4 依 Ts 決定播放張數同一套道理）。
+    % phi 先 unwrap 再內插、內插完再包回 (-pi, pi]，避免航向剛好跨過
+    % ±180° 邊界時內插出錯誤的跳變（純數值處理細節，不影響實際航向）。
+    % （其餘未選中的分支曲線這段期間維持顯示，見檔頭說明）
+    s_chosen = [0; cumsum(hypot(diff(chosen.x), diff(chosen.y)))];
+    total_dist = s_chosen(end);
+    frame_spacing = max(state(4), 0.1) * anim_dt;
+    n_frames = max(2, round(total_dist / frame_spacing) + 1);
+    s_frames = linspace(0, total_dist, n_frames)';
+    [fx, fy, fphi_unwrapped] = resample_window_by_arclength(chosen.x, chosen.y, unwrap(chosen.phi), s_chosen, s_frames);
+    fphi = atan2(sin(fphi_unwrapped), cos(fphi_unwrapped));
+
+    for j = 1:n_frames
+        set(h.dot, 'XData', fx(j), 'YData', fy(j));
+        set(h_heading, 'XData', [fx(j), fx(j) + heading_len*cos(fphi(j))], ...
+                       'YData', [fy(j), fy(j) + heading_len*sin(fphi(j))]);
+        set(ax, 'XLim', [fx(j)-view_radius, fx(j)+view_radius], ...
+                'YLim', [fy(j)-view_radius, fy(j)+view_radius]);
+        set(h_title, 'String', sprintf('第 %d 步：%s（往車道 %+d）移動中 %d/%d', ...
+            step, type_name_zh.(chosen.type), chosen.to_lane_id, j, n_frames));
+        drawnow;
+        pause(anim_dt / playback_speed);
+    end
 
     state = [chosen.x(end), chosen.y(end), chosen.phi(end), params.v_des];
     current_lane_id = next_lane_id;

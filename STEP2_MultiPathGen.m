@@ -31,19 +31,13 @@ load('reference_path.mat', 'refpath');
 stride = 50;
 gps_wp = [refpath.x(1:stride:end), refpath.y(1:stride:end)];
 
-% 產生 N_paths 條側向平移候選路徑（整條路線，from 起點 to 終點）
-path_candidates = my_multi_path(gps_wp, params.N_paths, params);
+% 產生 N_paths 條側向平移候選路徑（整條路線，from 起點 to 終點）。
+% offsets 直接拿 my_multi_path.m 實際用來生成候選路徑的偏移量數值，
+% 不在這裡反推公式——避免跟該檔案的偏移量公式各自維護一份、日後改動時
+% 兩邊沒同步更新導致標示數值跟實際候選路徑對不起來。
+[path_candidates, offsets] = my_multi_path(gps_wp, params.N_paths, params);
 
 % ---- 繪圖：把每條候選路徑用不同顏色畫出來，並標示各自的側向偏移量 ----
-% 偏移量公式必須跟 my_multi_path.m 實際產生候選路徑用的公式完全一致，
-% 才能算出正確的圖例標示數值。my_multi_path.m 的側向偏移範圍涵蓋本車道
-% + 左右各 n_side_lanes 條鄰車道（詳見該檔案內「span_half」的計算），
-% 不是單純 ±lane_width/2，這裡要用同一套公式反推，不能各自維護一份。
-n_side_lanes = 0;
-if isfield(params, 'n_side_lanes'), n_side_lanes = params.n_side_lanes; end
-span_half = params.lane_width/2 + n_side_lanes * params.lane_width;
-offsets = linspace(-span_half, span_half, params.N_paths);
-
 figure; hold on; axis equal; grid on;
 colors = lines(params.N_paths);
 for i = 1:params.N_paths

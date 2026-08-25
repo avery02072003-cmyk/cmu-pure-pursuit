@@ -35,9 +35,13 @@
 %
 % 輸出：
 %   path_candidates : cell array，每個元素是 refpath 結構 (x, y, phi, kappa, v_profile)
+%   offsets         : 1xN_paths，第 i 條候選路徑實際用到的側向偏移量（呼叫端
+%                      需要這個數值時直接用這個輸出，不要自己反推公式——
+%                      STEP2_MultiPathGen.m 曾經各自維護一份同樣的公式，
+%                      兩邊沒同步更新導致標示數值跟實際生成的候選路徑對不起來）
 % =========================================================================
 
-function path_candidates = my_multi_path(gps_waypoints, N_paths, params)
+function [path_candidates, offsets] = my_multi_path(gps_waypoints, N_paths, params)
     win = 9;              % 供防呆用，需與 compute_path_curvature 的平滑視窗一致
     sample_stride = 25;   % 每段 1000 個取樣點降到 ~40 點，整條路線預覽仍平滑但不會產生過量資料
 
