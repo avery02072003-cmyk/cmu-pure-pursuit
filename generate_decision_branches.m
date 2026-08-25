@@ -59,6 +59,8 @@
 %     .to_lane_id     這條分支走到底會抵達的車道代號
 %     .x .y .phi      世界座標系下的分支路徑點（從 state 位置到決策點）
 %     .decision_point [x_end, y_end]，這條分支末端的 X 標記座標
+%     .distance_m     這條分支到決策點的實際延伸距離（=本次呼叫用到的
+%                      decision_spacing_m，供畫圖標示用）
 % =========================================================================
 
 function branches = generate_decision_branches(state, refpath, params, current_lane_id)
@@ -78,7 +80,7 @@ function branches = generate_decision_branches(state, refpath, params, current_l
     % ---- 窗口只需要抽一次，所有分支共用同一段母路徑窗口 ----
     [wx, wy, wphi, s_win] = sample_refpath_window(state(1:2), refpath, decision_spacing_m);
 
-    branches = struct('type', {}, 'to_lane_id', {}, 'x', {}, 'y', {}, 'phi', {}, 'decision_point', {});
+    branches = struct('type', {}, 'to_lane_id', {}, 'x', {}, 'y', {}, 'phi', {}, 'decision_point', {}, 'distance_m', {});
 
     for i = 1:numel(to_lane_ids)
         to_lane_id = to_lane_ids(i);
@@ -138,6 +140,13 @@ function branches = generate_decision_branches(state, refpath, params, current_l
             'type', type_str, ...
             'to_lane_id', to_lane_id, ...
             'x', path_x, 'y', path_y, 'phi', path_phi, ...
-            'decision_point', [path_x(end), path_y(end)]); %#ok<AGROW>
+            'decision_point', [path_x(end), path_y(end)], ...
+            'distance_m', decision_spacing_m); %#ok<AGROW>
+            % distance_m：這條分支到「下一個決策點」實際延伸的距離。目前同一次
+            % generate_decision_branches() 呼叫裡，所有分支的 distance_m 都相同
+            % （都是同一個 decision_spacing_m），分開存成每條分支自己的欄位是為了
+            % 讓 update_decision_graph_plot.m 可以直接讀 branches(i).distance_m
+            % 標在對應的 X 標記旁邊，不需要额外傳遞 decision_spacing_m，也讓未來
+            % 如果改成「每條分支距離可以不同」時不用再改資料結構。
     end
 end

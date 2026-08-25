@@ -35,17 +35,22 @@ gps_wp = [refpath.x(1:stride:end), refpath.y(1:stride:end)];
 path_candidates = my_multi_path(gps_wp, params.N_paths, params);
 
 % ---- 繪圖：把每條候選路徑用不同顏色畫出來，並標示各自的側向偏移量 ----
+% 偏移量公式必須跟 my_multi_path.m 實際產生候選路徑用的公式完全一致，
+% 才能算出正確的圖例標示數值。my_multi_path.m 的側向偏移範圍涵蓋本車道
+% + 左右各 n_side_lanes 條鄰車道（詳見該檔案內「span_half」的計算），
+% 不是單純 ±lane_width/2，這裡要用同一套公式反推，不能各自維護一份。
+n_side_lanes = 0;
+if isfield(params, 'n_side_lanes'), n_side_lanes = params.n_side_lanes; end
+span_half = params.lane_width/2 + n_side_lanes * params.lane_width;
+offsets = linspace(-span_half, span_half, params.N_paths);
+
 figure; hold on; axis equal; grid on;
 colors = lines(params.N_paths);
 for i = 1:params.N_paths
     p = path_candidates{i};
     if ~isempty(p) && isfield(p, 'x')
-        % 偏移量公式跟 shift_waypoints_lateral 呼叫時用的
-        % linspace(-lane_width/2, lane_width/2, N_paths) 一致，這裡只是
-        % 反推出第 i 條對應的偏移量數值，純粹用於圖例標示
         plot(p.x, p.y, '-', 'Color', colors(i,:), 'LineWidth', 1.5, ...
-             'DisplayName', sprintf('Path %d (offset=%.1fm)', i, ...
-             params.lane_width/2 * (2*(i-1)/(params.N_paths-1)-1)));
+             'DisplayName', sprintf('Path %d (offset=%.2fm)', i, offsets(i)));
     end
 end
 plot(gps_wp(:,1), gps_wp(:,2), 'k+', 'MarkerSize', 10, 'DisplayName', 'GPS Waypoints');

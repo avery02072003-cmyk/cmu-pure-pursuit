@@ -124,11 +124,15 @@ for step = 1:numel(demo_lane_sequence)-1
     current_lane_id = next_lane_id;
 end
 
-% ---- 最後一個決策點也畫出來，讓展示停在完整的畫面上 ----
+% ---- 走完全部 7 個決策點後，在最終停留位置額外多畫一次分支圖 ----
+% 這一格不是序列裡的第 8 個決策點（demo_lane_sequence 只有 7 次轉換，
+% 決策點編號到 7 就結束了），純粹是讓展示停留在「終點位置也能看到接下來
+% 有哪些選項」的完整畫面，標題不用「X/Y」分數格式，避免看起來像多出一個
+% 對不起來的決策點編號。
 branches = generate_decision_branches(state, refpath, params, current_lane_id);
 h = update_decision_graph_plot(h, state, branches);
 set(ax, 'XLim', [state(1)-view_radius, state(1)+view_radius], ...
         'YLim', [state(2)-view_radius, state(2)+view_radius]);
-set(h_title, 'String', sprintf('決策點 %d/%d（結束）｜目前車道 %+d ｜ v = %.2f m/s', ...
-    numel(demo_lane_sequence), numel(demo_lane_sequence)-1, current_lane_id, state(4)));
-fprintf('=== 展示結束 ===\n');
+set(h_title, 'String', sprintf('展示結束（共 %d 個決策點）｜最終位置車道 %+d ｜ v = %.2f m/s', ...
+    numel(demo_lane_sequence)-1, current_lane_id, state(4)));
+fprintf('=== 展示結束（共 %d 個決策點） ===\n', numel(demo_lane_sequence)-1);

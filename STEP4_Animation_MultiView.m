@@ -42,6 +42,22 @@
 %   到車道邊界的距離 —— 這比只看貨櫃中心點更準確，因為真正判斷「壓線」
 %   要看車身輪廓有沒有超出邊界，不是只看軸心。距離為正代表還在車道內、
 %   為負代表已經壓出車道邊界，文字顏色會跟著綠/紅切換。
+%
+% 離散車道決策分支圖（這次整合進來，邏輯本身完全在獨立模組裡）：
+%   跟即時候選路徑一樣，每次 replan（同一個 T_replan 節奏）都用車輛
+%   「當下真實位置與速度」重新呼叫 estimate_current_lane_id.m 判斷所在
+%   車道、generate_decision_branches.m 生成 2~3 條分支，再用
+%   update_decision_graph_plot.m 畫出來。本檔案只負責「在對的時間點呼叫
+%   這些既有模組、把結果疊加到同一張圖上」，分支生成/繪圖的實際邏輯
+%   完全沒有複製一份到這裡，維持模組化——這幾個函式同時也是
+%   STEP3_DecisionGraphDemo.m 在用的同一套。
+%   ⚠ 因為目前 main_pure_pursuit_sim.m 的追蹤模擬在沒有障礙物時永遠停在
+%   中間車道（select_best_path.m 評分機制會讓 CTE 最小的置中候選路徑
+%   永遠勝出），這裡疊加出來的決策分支圖整趟動畫會一直是「3 分支」
+%   （中間車道）情境，不會出現左右車道的「2 分支」情境——這是真實模擬
+%   資料忠實呈現的結果，不是 bug。如果要看到 2 分支情境，請看
+%   STEP3_DecisionGraphDemo.m（那裡用腳本排定的車道序列，刻意走過所有
+%   分支情境做展示用）。
 % =========================================================================
 
 clear; clc; close all;
@@ -127,6 +143,13 @@ if n_side_lanes > 0
 end
 
 % ---- 即時局部候選路徑：每次 replan 都重新生成，用固定顏色代表「第幾條候選」----
+% show_candidate_fan：預設關閉。這組 9 條細虛線的候選路徑扇形，跟下面
+% 新加的離散車道決策分支圖，在近乎直線的路段涵蓋範圍很接近、視覺上會
+% 疊在一起顯得雜亂，所以預設隱藏，只顯示決策分支圖。底層資料/更新邏輯
+% 完全沒有拿掉，只是不畫出來——想同時看兩者，把這裡改回 true 即可，
+% 不需要改動其他任何地方。
+show_candidate_fan = false;
+
 colors = lines(params.N_paths);
 h_cand = gobjects(1, params.N_paths);
 for i = 1:params.N_paths
@@ -135,6 +158,10 @@ for i = 1:params.N_paths
 end
 h_cand_active = plot(ax, NaN, NaN, '-', 'Color', [1 1 1], 'LineWidth', 2.2, ...
     'DisplayName', 'Active Candidate（本次選中的路徑）');
+if ~show_candidate_fan
+    set(h_cand, 'Visible', 'off');
+    set(h_cand_active, 'Visible', 'off');
+end
 
 % ---- 動態物件：tractor / trailer / hitch / 車輛外框 ----
 h_tractor_trail = plot(ax, NaN, NaN, 'b-', 'LineWidth', 1.5, 'DisplayName','Tractor 軌跡');
@@ -151,8 +178,15 @@ h_lane_status = text(ax, 0.015, 0.985, '', 'Units','normalized', ...
     'VerticalAlignment','top', 'FontSize', 11, 'FontWeight','bold', ...
     'BackgroundColor', [0 0 0 0.55], 'Margin', 4, 'Color', 'g');
 
+% ---- 離散車道決策分支圖（本檔案只呼叫既有模組，邏輯見檔頭說明）----
+h_decision = init_decision_graph_plot(ax);
+
 h_title = title(ax, '', 'Color','w');
-legend_handles = [h_lane_boundary, h_cand_active, h_tractor_trail, h_trailer_trail, h_tractor_body, h_trailer_body, h_hitch_line];
+legend_handles = [h_lane_boundary, h_tractor_trail, h_trailer_trail, h_tractor_body, h_trailer_body, h_hitch_line, ...
+    h_decision.legend_straight, h_decision.legend_change_left, h_decision.legend_change_right, h_decision.legend_decision_x];
+if show_candidate_fan
+    legend_handles = [legend_handles, h_cand_active];   % 候選路徑扇形隱藏時，圖例也不需要列出這個看不到的項目
+end
 if n_side_lanes > 0
     legend_handles = [legend_handles, h_neighbor_boundary(1)];
 end
@@ -185,6 +219,15 @@ for k = 1:skip:Nsim
     x0 = hist.x0(k); y0 = hist.y0(k); yaw0 = hist.yaw0(k);
     x1 = hist.x1(k); y1 = hist.y1(k); yaw1 = hist.yaw1(k);
     Hx = hist.Hx(k); Hy = hist.Hy(k);
+
+    % ---- 每次 replan 也重新生成一次離散車道決策分支圖，跟候選路徑同一節奏更新 ----
+    % （用車輛「當下真實位置/航向/速度」即時呼叫，不是預先記錄好的資料）
+    if mod(k, params.T_replan) == 1
+        current_lane_id = estimate_current_lane_id([x0, y0], refpath, params);
+        decision_state = [x0, y0, yaw0, hist.v_cmd(k)];
+        branches = generate_decision_branches(decision_state, refpath, params, current_lane_id);
+        h_decision = update_decision_graph_plot(h_decision, decision_state, branches);
+    end
 
     % ---- 即時計算貨櫃是否壓線 ----
     % 1. 貨櫃後軸 (x1,y1) 對母路徑（車道中心線）做最近點投影，
