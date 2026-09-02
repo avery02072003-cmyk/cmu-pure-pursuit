@@ -21,13 +21,13 @@
 %   idx_near    : 最近點在 refpath 的索引
 %   Ld          : 本步動態前視距離 (m)
 %   alpha       : 車輛到目標點的方位角誤差 (rad)
-%   v_lat_limit : 這一步的轉向幾何（未被側向加速度限制前）需要的曲率，
-%                 換算出來「車輛最快只能開多快」的速度上限 (m/s)。供
-%                 main_pure_pursuit_sim.m 的縱向速度控制即時取用（見
-%                 步驟十的完整推導）——不是拿來取代 compute_v_profile.m
-%                 事先規劃好的 v_profile，而是跟它取更保守的那個當這
-%                 一步的即時目標，讓速度控制不用等到下次 replan 才
-%                 發現「這一步其實已經轉不動了」。
+%   v_lat_limit : 路徑在 look-ahead 目標點的幾何曲率換算出來「車輛最快
+%                 只能開多快」的速度上限 (m/s)（含 a_lat_margin 安全
+%                 餘裕）。供 main_pure_pursuit_sim.m 的縱向速度控制即時
+%                 取用（見步驟十的完整推導）——不是拿來取代
+%                 compute_v_profile.m 事先規劃好的 v_profile，而是跟它
+%                 取更保守的那個當這一步的即時目標，讓速度控制不用等到
+%                 下次 replan 才發現「這一步其實已經轉不動了」。
 %
 % 控制器架構：
 %   delta = delta_pp + delta_fb
@@ -195,10 +195,10 @@ delta = max(-delta_max_phys, min(delta, delta_max_phys));
 % 若超出，反推出允許的最大 kappa，重新計算 delta
 %
 % v_lat_limit（新增輸出，供呼叫端即時修正車速用）：
-%   這道限制是 |v²·kappa_cmd| <= a_lat_max，換句話說，在「目前這個
-%   轉向幾何真正需要的曲率 kappa_cmd」之下，車輛最快只能開到
-%   v_lat_limit = sqrt(a_lat_max / |kappa_cmd|)，超過這個速度，轉向就會
-%   被這道安全網砍掉、車輛實際上轉不出目標曲率所需要的彎。
+%   這道限制是 |v²·kappa| <= a_lat_max，換句話說，在「即將面對的曲率」
+%   之下，車輛最快只能開到 v_lat_limit = sqrt(a_lat_max*a_lat_margin /
+%   |kappa|)，超過這個速度，轉向就會被下面的安全網硬砍掉、車輛實際上
+%   轉不出目標曲率所需要的彎。
 %
 %   這個限制本身沒有錯（物理上車輛真的做不到更急的轉彎），問題出在：
 %   compute_v_profile.m 事先規劃好的 v_profile，只有在每次 T_replan
@@ -217,10 +217,30 @@ delta = max(-delta_max_phys, min(delta, delta_max_phys));
 %   網」，不用等到下一次 replan 才更新；車速本身仍然只能以 a_dec_max
 %   的物理減速率逼近這個目標（沒有違反任何運動學限制，只是讓目標值
 %   更即時、更準確，不再依賴半秒才更新一次、可能偏樂觀的預先規劃值）。
+%
+%   曲率來源：用 refpath.kappa(idx_target)（路徑本身在 look-ahead 目標點
+%   的幾何曲率，跟 compute_v_profile.m 建 v_profile 用的是同一組
+%   compute_path_curvature.m 算出來、已經移動平均濾波過的平滑曲率），
+%   不是從這一步實際命令的 delta 反推 kappa_cmd。原因：kappa_cmd 會因為
+%   look-ahead 目標點落在離散路徑點之間跳動、貨櫃動態瞬態等因素逐步
+%   雜訊震盪（實測：即使車輛平順追蹤、CTE 幾乎是零，用 kappa_cmd 反推
+%   的 v_lat_limit 仍然在 5~25 m/s 之間鋸齒狀劇烈跳動），直接拿雜訊訊號
+%   當速度目標並不理想；路徑幾何曲率是路徑本身固定的屬性、不隨控制器
+%   逐步的雜訊變動，換算出來的速度目標自然平滑，物理意義也更直接（車
+%   速要配合「即將面對的曲率」，本來就該看路徑本身，不是看這一步剛好
+%   算出的轉向指令）。乘上 a_lat_margin，是讓這個即時回饋跟
+%   compute_v_profile.m 的規劃目標用同一套安全餘裕標準，兩者在正常情況
+%   下應該非常接近（因為源頭是同一個 kappa 陣列），v_lat_limit 這時純粹
+%   是錦上添花的一致性保險，只有在車速真的還沒跟上規劃進度時才會實際
+%   拉低目標——下面的轉向硬限制（kappa_cmd、delta 的再截斷）維持用
+%   controller 真正下達的 delta 計算，因為那是真正的物理安全底線，
+%   必須反映「這一步實際上到底轉了多少」，不能用平滑過的路徑曲率取代。
 % -------------------------------------------------------------------------
-kappa_cmd = tan(delta) / params.L1;    % 由轉向角計算曲率指令
+kappa_path_ahead = abs(refpath.kappa(idx_target));  % 路徑本身在目標點的幾何曲率（平滑，見上方說明）
+v_lat_limit = sqrt(params.a_lat_max * params.a_lat_margin / max(kappa_path_ahead, 1e-4));  % 這個即將面對的曲率允許的最高速度
+
+kappa_cmd = tan(delta) / params.L1;    % 由「這一步實際命令的」轉向角計算曲率指令，供下面硬限制用
 a_lat_cmd  = v^2 * kappa_cmd;         % 估算側向加速度
-v_lat_limit = sqrt(params.a_lat_max / max(abs(kappa_cmd), 1e-4));  % 這個轉向幾何允許的最高速度
 
 if abs(a_lat_cmd) > params.a_lat_max
     % 超出限制：反推最大允許曲率，再換算回轉向角

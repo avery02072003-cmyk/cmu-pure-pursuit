@@ -266,6 +266,16 @@ hist.cte        = zeros(Nsim,1);  % 橫向追蹤誤差 CTE (m)
 hist.he         = zeros(Nsim,1);  % 航向誤差 (rad)
 hist.kappa      = zeros(Nsim,1);  % 當步曲率指令 (1/m)
 hist.a_lat      = zeros(Nsim,1);  % 當步側向加速度 (m/s²)
+hist.v_ref      = zeros(Nsim,1);  % 這一步縱向速度跟隨控制「真正」追的目標
+                                   % (m/s)——已經疊加 v_profile 查表、
+                                   % v_lat_limit 轉向飽和回饋、鉸接角安全網
+                                   % 三層修正後的最終值，不是單純的 v_profile
+                                   % 查表結果。畫圖比較「實際速度 vs 參考」
+                                   % 要用這個，不能直接拿 refpath.v_profile
+                                   % （那是空間索引、長度是整條母路徑點數，
+                                   % 跟 hist 其他欄位的「時間步」索引長度、
+                                   % 意義都不同，直接放同一個 x 軸比較沒有
+                                   % 意義——這是圖四以前畫錯的原因）。
 
 hist.theta0     = zeros(Nsim,1);  % 別名，讓 STEP4 animation 相容
 hist.theta1     = zeros(Nsim,1);
@@ -377,6 +387,8 @@ for k = 1:Nsim
 
     % --- 鉸接角安全網：逼近 phi_max 時漸進降速（只降速，不動轉向）---
     [v_ref_now, gov_active, hitch_now] = hitch_angle_governor(v_ref_now, yaw0, yaw1, params);
+
+    hist.v_ref(k) = v_ref_now;   % 記錄這一步「三層修正後」真正的速度目標，供事後畫圖比較用
 
     % 保存這步更新「前」的速度，供下次 replan 時 shape_v_profile_cubic.m
     % 用有限差分 (v-v_prev_step)/Ts 估計當下縱向加速度 a_now 邊界條件
@@ -528,6 +540,16 @@ results.params = params;                   % 動畫需要車輛尺寸等參數
 save('simulation_results.mat', 'results');
 fprintf('✓ simulation_results.mat 已儲存\n');
 
+% ---- 所有時間序列圖統一用「模擬時間（秒）」當 x 軸，不用原始步數索引 ----
+% 原因：原始步數索引本身沒有物理意義（依賴 Ts 才能換算成真實時間），
+% 而且圖四原本直接把 refpath.v_profile（長度是整條母路徑的空間取樣點數，
+% 跟模擬步數 Nsim 完全是兩回事）跟 hist.v（長度 Nsim）畫在同一個「索引」
+% x 軸上，兩條線根本不是同一個東西、不能這樣比較——這是先前圖四看起來
+% 像雜訊震盪的真正原因（不是控制迴路本身不穩定，是畫錯圖）。全部改用
+% ts（秒）+ hist 內本來就逐步記錄好的欄位，確保每張圖的每一條線都是
+% 同一個時間軸、同一組真實模擬資料。
+ts = results.ts;
+
 % --- 圖一：路徑追蹤結果 ---
 figure; hold on; axis equal; grid on;
 plot(refpath.x, refpath.y, 'k:', 'LineWidth', 0.8, 'DisplayName', 'Reference (母路徑)');
@@ -550,29 +572,35 @@ end
 
 plot(hist.x1, hist.y1, 'g-', 'LineWidth', 1.2, 'DisplayName', 'Trailer');
 legend show;
+xlabel('X (m)'); ylabel('Y (m)');
 title('Pure Pursuit Tracking + Path Switching');
+% 註：背景的細虛線候選路徑只是「最後一次 replan」的靜態快照（見
+% path_candidates 註解），不是全程動態紀錄；要看候選路徑隨時間即時
+% 變化的完整動畫，請用 STEP4_Animation_MultiView.m（讀 replan_log）。
 
 % --- 圖二：轉向角指令歷程 ---
 figure;
-plot(rad2deg(hist.delta), 'LineWidth', 1.2);  % 轉換為角度顯示
+plot(ts, rad2deg(hist.delta), 'LineWidth', 1.2);
 grid on;
-xlabel('Step');
+xlabel('Time (s)');
 ylabel('Steering Angle (deg)');
 title('Steering Command');
 
 % --- 圖三：追蹤誤差歷程（CTE 和 Heading Error）---
 figure;
 subplot(2,1,1);
-plot(hist.cte, 'LineWidth', 1.2);   % 橫向誤差
+plot(ts, hist.cte, 'LineWidth', 1.2);   % 橫向誤差
 grid on;
+xlabel('Time (s)');
 ylabel('CTE (m)');
 title('Tracking Errors');
 
 subplot(2,1,2);
-plot(rad2deg(hist.he), 'LineWidth', 1.2);   % 航向誤差（轉角度顯示）
+plot(ts, rad2deg(hist.he), 'LineWidth', 1.2);   % 航向誤差（轉角度顯示）
 grid on;
-xlabel('Step');
+xlabel('Time (s)');
 ylabel('Heading Error (deg)');
+title('Heading Error');
 
 % --- 終端機輸出第一次誤差統計 ---
 fprintf('CTE RMS = %.4f m\n',            rms(hist.cte));
@@ -580,23 +608,53 @@ fprintf('Heading Error RMS = %.4f deg\n', rms(rad2deg(hist.he)));
 fprintf('Max |delta| = %.4f deg\n',       max(abs(rad2deg(hist.delta))));
 
 % --- 圖四：速度規劃與側向加速度 ---
+% 參考線改用 hist.v_ref（這一步縱向速度跟隨控制「真正」追的目標，已經
+% 疊加 v_profile 查表、v_lat_limit 轉向飽和回饋、鉸接角安全網三層修正，
+% 見該欄位宣告處的完整說明），不是整條母路徑的 v_profile——同一個 hist
+% 時間軸、同一組資料，才是真正跟「實際速度」可比較的參考線。
 figure;
 subplot(2,1,1);
-plot(refpath.v_profile, 'r--', 'LineWidth', 1.2); hold on;  % 參考速度剖面
-plot(hist.v, 'b-', 'LineWidth', 1.2);                        % 實際速度
+plot(ts, hist.v_ref, 'r--', 'LineWidth', 1.2); hold on;
+plot(ts, hist.v,     'b-',  'LineWidth', 1.2);
 grid on;
-legend('Reference Speed Profile', 'Actual Speed');
+legend('Target Speed (v\_ref，含轉向/鉸接角回饋)', 'Actual Speed', 'Location', 'best');
+xlabel('Time (s)');
 ylabel('Speed (m/s)');
 title('Speed Profile');
 
 subplot(2,1,2);
-plot(hist.a_lat, 'LineWidth', 1.2); hold on;
+plot(ts, hist.a_lat, 'LineWidth', 1.2); hold on;
 yline(params.a_lat_max, 'r--');   % 側向加速度上限
 yline(-params.a_lat_max, 'r--'); % 側向加速度下限
 grid on;
-xlabel('Step');
+xlabel('Time (s)');
 ylabel('Lateral Accel (m/s^2)');
 title('Lateral Acceleration');
+
+% --- 圖五：鉸接角安全裕度（聯結車特有，先前完全沒有畫出來）---
+% phi_max 是鉸接角物理上限（見 STEP1_VehicleParameters.m），
+% hitch_angle_governor.m 在逼近 phi_max*0.85 附近就會開始主動降速
+% （gov_active=true 標示介入區間），這張圖讓「鉸接角安全網到底有沒有
+% 介入、介入時鉸接角實際跑多高」可以直接用肉眼確認，跟這次修正過程中
+% 反覆檢查的鉸接角數據（例如過彎時是否維持在 phi_max 以下）對應。
+figure; hold on;
+plot(ts, rad2deg(hist.hitch_now), 'LineWidth', 1.2, 'DisplayName', 'Hitch Angle');
+yline(rad2deg(params.phi_max), 'r--', 'DisplayName', 'phi\_max（物理上限）');
+yline(rad2deg(params.phi_max)*0.85, 'y--', 'DisplayName', '0.85×phi\_max（governor 介入門檻）');
+gov_idx = find(hist.gov_active);
+if ~isempty(gov_idx)
+    % 只有 governor 真的介入過（gov_active 曾經為 true）才畫這條線，
+    % 避免圖例列出一條完全沒有資料點的空線（用 DisplayName 而不是
+    % 位置式 legend() 參數，圖例自動只收集實際存在的線，不會因為
+    % governor 沒介入就對不齊）
+    plot(ts(gov_idx), rad2deg(hist.hitch_now(gov_idx)), 'r.', 'MarkerSize', 8, ...
+        'DisplayName', 'governor 介入中');
+end
+grid on;
+xlabel('Time (s)');
+ylabel('Hitch Angle (deg)');
+title('Hitch Angle Safety Margin');
+legend('Location', 'best');
 
 switch_count = sum(diff(hist.active_idx) ~= 0);
 fprintf('路徑切換次數 = %d 次（共 %d 步，平均每 %.1f 步切換一次）\n', ...
