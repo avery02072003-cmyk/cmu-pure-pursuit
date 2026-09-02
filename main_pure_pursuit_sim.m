@@ -92,7 +92,7 @@ params.Kh = 0.4;        % 航向誤差回授增益，對應 delta_fb = -Kh * he 
                         % 值越大修正越積極，但可能導致 CTE 惡化
 
 % --- 動態速度規劃參數（對應論文縱向約束）---
-params.v_des = 6.0;     % 期望巡航速度 (m/s)
+params.v_des = 25.0;     % 期望巡航速度 (m/s)
 params.v_min = 1.0;     % 最低速度下限 (m/s)，防止除以零
 params.a_lat_max = 2.0; % 側向加速度限制 (m/s²)，論文約束 |a_lat| ≤ a_lat_max
 params.a_acc_max = 1.0; % 縱向加速度上限 (m/s²)，論文約束 a ≤ a_acc_max
