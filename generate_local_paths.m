@@ -47,8 +47,32 @@
 % 有車輛狀態 state、母路徑 refpath、params，任何控制方法都能呼叫本函式
 % 拿到一組候選路徑）。
 %
+% 窗口長度隨車速動態調整（這次修正，解決 v_des 提高到 25m/s 後車輛
+% 過彎失控的深層根因）：
+%   local_horizon_m（預設 35m）原本是固定值，是照 v_des=6m/s 這個原始
+%   設計速度調的——這個窗口長度必須至少能容納「從目前車速煞車到彎道
+%   安全速度」所需要的距離，否則 compute_v_profile.m 的 backward pass
+%   即使公式跟輸入的 ds 都完全正確，也「看不到」足夠遠的地方去規劃提早
+%   減速，車輛只能在視窗長度內硬煞，煞不夠就會帶著過快的速度衝進彎道。
+%   v_des=6m/s 時，從 6 減速到 0 只需要 v_des^2/(2*a_dec_max)=12m，遠小於
+%   35m，窗口綽綽有餘；但 v_des=25m/s 時，同樣算法需要 625/(2*1.5)≈208m
+%   ——是原本窗口的 5 倍以上！這正是本次除錯過程中，即使 ds、Ld、候選
+%   路徑回收模式、轉向飽和回饋、速度規劃安全餘裕都個別修正驗證正確後，
+%   車輛仍在同一個彎道（同樣的 v、kappa）反覆偏出母路徑的真正原因：
+%   窗口本身太短，規劃再精準也「看」不到那麼遠。
+%
+%   修正方式：呼叫端傳入車輛目前速度（state 第 4 個元素），窗口實際
+%   長度取 max(params.local_horizon_m, v^2/(2*params.a_dec_max))——用
+%   「從目前速度煞到全停」所需距離當作保守上界（真正的彎道通常不需要
+%   煞到全停，這個公式只是確保窗口一定夠長，不是精算真正需要多少），
+%   車速越快窗口自動拉得越長；車速回到 v_des=6m/s 附近時，12m 遠小於
+%   35m 的下限，窗口維持原本的 35m，跟修改前完全一樣、零行為變化。
+%   跟 pure_pursuit_controller.m 的 Ld_max_dyn 是同一套「低速時維持
+%   下限、高速時自動放大」設計原則。
+%
 % 輸入：
-%   state     : [x, y, yaw] 車輛目前位姿（錨點，這是「即時性」的來源）
+%   state     : [x, y, yaw, v] 車輛目前位姿與速度（位置是錨點，這是
+%               「即時性」的來源；v 用來動態決定窗口長度，見上方說明）
 %   refpath   : 母路徑 struct，含 .x .y .phi（環形路線，首尾相接）
 %   params    : 需要 lane_width, n_side_lanes（候選路徑側向涵蓋左右各幾條
 %               鄰車道，0=只在本車道內）, local_horizon_m, local_wp_spacing,
@@ -58,7 +82,10 @@
 %   obstacles : 保留參數，目前傳 [] / {}；之後路障功能直接接這個介面，不必再改函式簽名
 %
 % 輸出：
-%   path_candidates : cell array，每個元素是 refpath 結構 (.x .y .phi .kappa .v_profile)，
+%   path_candidates : cell array，每個元素是 refpath 結構 (.x .y .phi .offset
+%                      .kappa .v_profile)，.offset 是這條候選相對母路徑
+%                      中心線的側向偏移量（供 select_best_path.m 讀取，
+%                      不用各自反推公式，見該檔案回收模式的說明），
 %                      格式與 pure_pursuit_controller.m / select_best_path.m 現有介面相同
 %
 % 演算法步驟：
@@ -75,11 +102,14 @@ function path_candidates = generate_local_paths(state, refpath, params, N_paths,
     dist_all = hypot(refpath.x - state(1), refpath.y - state(2));
     [~, idx_near] = min(dist_all);
 
-    % ---- 2. 從錨定索引往前走，累積弧長直到涵蓋 local_horizon_m（環形路線用 mod 處理接縫）----
+    % ---- 2. 從錨定索引往前走，累積弧長直到涵蓋動態窗口長度（環形路線用 mod 處理接縫）----
+    % horizon_m：跟車速成比例，見檔頭「窗口長度隨車速動態調整」說明
+    v_now = state(4);
+    horizon_m = max(params.local_horizon_m, v_now^2 / (2*params.a_dec_max));
     idx_list = idx_near;
     arc = 0;
     i_cur = idx_near;
-    while arc < params.local_horizon_m && numel(idx_list) < Nref
+    while arc < horizon_m && numel(idx_list) < Nref
         i_nxt = mod(i_cur, Nref) + 1;
         arc = arc + hypot(refpath.x(i_nxt)-refpath.x(i_cur), refpath.y(i_nxt)-refpath.y(i_cur));
         idx_list(end+1) = i_nxt; %#ok<AGROW>
@@ -146,8 +176,10 @@ function path_candidates = generate_local_paths(state, refpath, params, N_paths,
         cand.x = path_x;
         cand.y = path_y;
         cand.phi = path_phi;
+        cand.offset = offsets(i);   % 這條候選相對母路徑中心線的側向偏移量，供 select_best_path.m 的回收模式判斷用
         cand.kappa = compute_path_curvature(path_x, path_y, path_phi, params);
-        cand.v_profile = compute_v_profile(cand.kappa, params);
+        ds = hypot(diff(path_x), diff(path_y));   % 真實弧長間距，供 compute_v_profile.m 的煞車規劃用（不能用假設值）
+        cand.v_profile = compute_v_profile(cand.kappa, params, ds);
         path_candidates{i} = cand;
     end
 end

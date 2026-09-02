@@ -74,8 +74,10 @@ function [path_candidates, offsets] = my_multi_path(gps_waypoints, N_paths, para
         cand.x = path_x;
         cand.y = path_y;
         cand.phi = path_phi;
+        cand.offset = offsets(i);   % 跟 generate_local_paths.m 的候選結構保持一致（該欄位供 select_best_path.m 使用，這裡雖然 STEP2 用不到，仍保持兩邊結構相同）
         cand.kappa = compute_path_curvature(path_x, path_y, path_phi, params);
-        cand.v_profile = compute_v_profile(cand.kappa, params);
+        ds = hypot(diff(path_x), diff(path_y));   % 真實弧長間距，供 compute_v_profile.m 的煞車規劃用（不能用假設值）
+        cand.v_profile = compute_v_profile(cand.kappa, params, ds);
         path_candidates{i} = cand;
     end
 end

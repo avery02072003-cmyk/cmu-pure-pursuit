@@ -16,11 +16,18 @@
 %   idx_prev: 上一步的最近點索引（用於限制搜尋範圍）
 %
 % 輸出：
-%   delta      : 前輪轉向角指令 (rad)
-%   idx_target : look-ahead 目標點在 refpath 的索引
-%   idx_near   : 最近點在 refpath 的索引
-%   Ld         : 本步動態前視距離 (m)
-%   alpha      : 車輛到目標點的方位角誤差 (rad)
+%   delta       : 前輪轉向角指令 (rad)
+%   idx_target  : look-ahead 目標點在 refpath 的索引
+%   idx_near    : 最近點在 refpath 的索引
+%   Ld          : 本步動態前視距離 (m)
+%   alpha       : 車輛到目標點的方位角誤差 (rad)
+%   v_lat_limit : 這一步的轉向幾何（未被側向加速度限制前）需要的曲率，
+%                 換算出來「車輛最快只能開多快」的速度上限 (m/s)。供
+%                 main_pure_pursuit_sim.m 的縱向速度控制即時取用（見
+%                 步驟十的完整推導）——不是拿來取代 compute_v_profile.m
+%                 事先規劃好的 v_profile，而是跟它取更保守的那個當這
+%                 一步的即時目標，讓速度控制不用等到下次 replan 才
+%                 發現「這一步其實已經轉不動了」。
 %
 % 控制器架構：
 %   delta = delta_pp + delta_fb
@@ -51,7 +58,7 @@
 %   用 atan2 而不是 atan，是為了正確處理 alpha 為負值（目標點在車輛
 %   右側）時 delta 的正負號與角度範圍。
 % =========================================================================
-function [delta, idx_target, idx_near, Ld, alpha] = pure_pursuit_controller(x, y, yaw, v, refpath, params, idx_prev)
+function [delta, idx_target, idx_near, Ld, alpha, v_lat_limit] = pure_pursuit_controller(x, y, yaw, v, refpath, params, idx_prev)
 
 % 路徑總點數
 N = length(refpath.x);
@@ -89,10 +96,23 @@ end
 %   Ld0        : 基礎前視距離，保證最小看前距離
 %   kv*v       : 速度補償，速度越快看越遠（反應時間補償）
 %   kappa_gain*kappa : 曲率縮短，彎道時縮短 Ld 避免切彎
-% 最後截斷到 [Ld_min, Ld_max] 安全範圍
+% 最後截斷到 [Ld_min, Ld_max_dyn] 安全範圍
+%
+% Ld_max_dyn = max(Ld_max, Ld_time_cap_s * v)：上限不再是固定值。
+% params.Ld_max 本身當作「低速時的下限保障」，永遠不會比這個值更低；
+% Ld_time_cap_s*v 則讓上限隨車速線性成長。原因：固定上限（例如 8m）
+% 在設計速度（v_des=6m/s）時不會被頂到（Ld_raw=Ld0+kv*6=3.8m < 8m），
+% 但車速一旦大幅提高（例如 25m/s），Ld_raw=Ld0+kv*25=9.5m 就會被硬砍
+% 到 8m，前視「時間」（Ld/v）從設計時的 0.63s 腰斬到只剩 0.32s——
+% pure pursuit 在前視時間過短時會轉向過度激進、容易在彎道切出去，這正是
+% v_des 提高到 25m/s 後車輛過彎失控的根因之一。用 Ld_time_cap_s（而不是
+% 直接調高固定上限）是因為它讓上限本身跟著車速走，不會在某個更高的速度
+% 又重新頂到新的固定天花板；且在 v=6m/s 時 max(8, 0.4*6=2.4)=8，跟修改
+% 前完全一樣（v_des=6 是已驗證過的設計基準點，零行為變化）。
 % -------------------------------------------------------------------------
 Ld = params.Ld0 + params.kv * abs(v) - params.kappa_gain * kappa_near;
-Ld = max(params.Ld_min, min(Ld, params.Ld_max));  % 截斷到安全範圍
+Ld_max_dyn = max(params.Ld_max, params.Ld_time_cap_s * abs(v));
+Ld = max(params.Ld_min, min(Ld, Ld_max_dyn));  % 截斷到安全範圍
 
 % -------------------------------------------------------------------------
 % 步驟五：用弧長累加法搜尋 look-ahead 目標點 idx_target
@@ -173,9 +193,34 @@ delta = max(-delta_max_phys, min(delta, delta_max_phys));
 % 步驟十：側向加速度硬限制（論文約束）
 % 即使 delta 在物理範圍內，也要確保 |v²·kappa| ≤ a_lat_max
 % 若超出，反推出允許的最大 kappa，重新計算 delta
+%
+% v_lat_limit（新增輸出，供呼叫端即時修正車速用）：
+%   這道限制是 |v²·kappa_cmd| <= a_lat_max，換句話說，在「目前這個
+%   轉向幾何真正需要的曲率 kappa_cmd」之下，車輛最快只能開到
+%   v_lat_limit = sqrt(a_lat_max / |kappa_cmd|)，超過這個速度，轉向就會
+%   被這道安全網砍掉、車輛實際上轉不出目標曲率所需要的彎。
+%
+%   這個限制本身沒有錯（物理上車輛真的做不到更急的轉彎），問題出在：
+%   compute_v_profile.m 事先規劃好的 v_profile，只有在每次 T_replan
+%   （0.5秒）才重新規劃一次，如果車輛「目前實際速度」因為任何原因
+%   （減速指令本身也有 a_dec_max 斜率限制、規劃時的近似誤差等）還沒
+%   跟上這條曲線該有的速度，車輛會在還沒減到 v_lat_limit 之前就先
+%   撞上這道轉向安全網——這時候只是被動地砍轉向角、繼續照原速度直行，
+%   要等到「原本規劃的減速斜率」慢慢把車速降下來，這段時間車輛完全
+%   沒辦法轉彎，會直線衝出母路徑（這是 v_des 提高到 25m/s 後車輛過彎
+%   失控、且失控後修正過度變成來回振盪的根因——實測驗證見
+%   main_pure_pursuit_sim.m 呼叫端的完整推導與數據）。
+%
+%   修正方式：把 v_lat_limit 傳回呼叫端，讓縱向速度跟隨控制器在每一步
+%   都拿它跟預先規劃的 v_ref_now 取更保守（較小）的那個當目標，這樣
+%   車速的目標值會「即時」反映「這一步的轉向到底還撞不撞得到這道安全
+%   網」，不用等到下一次 replan 才更新；車速本身仍然只能以 a_dec_max
+%   的物理減速率逼近這個目標（沒有違反任何運動學限制，只是讓目標值
+%   更即時、更準確，不再依賴半秒才更新一次、可能偏樂觀的預先規劃值）。
 % -------------------------------------------------------------------------
 kappa_cmd = tan(delta) / params.L1;    % 由轉向角計算曲率指令
 a_lat_cmd  = v^2 * kappa_cmd;         % 估算側向加速度
+v_lat_limit = sqrt(params.a_lat_max / max(abs(kappa_cmd), 1e-4));  % 這個轉向幾何允許的最高速度
 
 if abs(a_lat_cmd) > params.a_lat_max
     % 超出限制：反推最大允許曲率，再換算回轉向角

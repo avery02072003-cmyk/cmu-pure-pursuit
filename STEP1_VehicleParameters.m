@@ -231,11 +231,35 @@ params.hitch_gov_hard_frac  = 0.90;  % 即時鉸接角達到 phi_max*0.90 時，
 %          main_pure_pursuit_sim.m 的曲率限速與 forward-backward pass 用）
 % =========================================================================
 params.v_des     = 6.0;    % [m/s] 期望巡航速度（無曲率限制時的目標速度）
-params.a_lat_max = 2.0;    % [m/s^2] 側向加速度上限，決定曲率限速：
-                            %         v_curve = sqrt(a_lat_max / |kappa|)
+params.a_lat_max = 2.0;    % [m/s^2] 側向加速度物理上限（pure_pursuit_
+                            %         controller.m 的硬限制真的是用這個
+                            %         值，不能改，這是車輛真正的物理極限）
+params.a_lat_margin = 0.85; % [-] 速度規劃時的安全餘裕係數（<=1）。決定
+                            %         曲率限速時實際用 sqrt(a_lat_max *
+                            %         a_lat_margin / |kappa|)，不是直接
+                            %         貼著 a_lat_max 規劃——貼著零餘裕的
+                            %         物理極限規劃，車速只要有一點點落後
+                            %         於規劃曲線（縱向速度只能以 a_dec_max
+                            %         斜率逼近、Ts 離散取樣本身就有落差），
+                            %         就會在還沒減到位前先被控制器的側向
+                            %         加速度硬限制砍轉向角，車輛因此轉不了
+                            %         彎、直線衝出母路徑——這是 v_des 提高
+                            %         到 25m/s 後車輛過彎失控的根因之一，
+                            %         完整推導見 compute_v_profile.m 檔頭。
 params.a_acc_max = 1.0;    % [m/s^2] 縱向加速度上限（forward pass 用）
 params.a_dec_max = 1.5;    % [m/s^2] 縱向減速度上限（backward pass 用，
                             %         確保在到達急彎前已經來得及減速）
+
+params.v_profile_cubic_enable = true;  % 是否啟用 shape_v_profile_cubic.m
+                            %         的三次多項式弧長速度剖面整形。開＝
+                            %         每次 replan 都把 compute_v_profile.m
+                            %         算出的安全速度上限，重新整形成一條
+                            %         「速度、加速度在起點都跟車輛目前真實
+                            %         狀態連續銜接」的平滑減速曲線；關＝
+                            %         直接用安全上限本身（不影響安全性，
+                            %         只影響減速曲線平不平滑，純粹方便驗證
+                            %         時單獨隔離這個功能本身的效果）。
+                            %         詳細數學推導見 shape_v_profile_cubic.m。
 
 % =========================================================================
 % 第 10 節：離散車道決策分支路徑參數（generate_decision_branches.m 專用）

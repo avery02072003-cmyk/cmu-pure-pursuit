@@ -84,7 +84,19 @@ params.L  = params.L1;
 params.Ld0 = 2.0;       % 基礎前視距離 (m)
 params.kv = 0.3;        % 速度前視補償係數 (m·s/m = s)
 params.Ld_min = 1.2;    % 前視距離下限 (m)，防止過近看目標
-params.Ld_max = 8.0;    % 前視距離上限 (m)，防止過遠跳過彎道
+params.Ld_max = 8.0;    % 前視距離上限 (m)。在 pure_pursuit_controller.m 裡
+                        % 現在當作「低速時的下限保障」用（實際上限是
+                        % max(Ld_max, Ld_time_cap_s*v)，見下一行），不是
+                        % 固定天花板——固定 8m 在 v_des=6m/s 時不會被頂到
+                        % （Ld_raw=3.8m），但 v_des 提高到 25m/s 時
+                        % Ld_raw=9.5m 會被硬砍到 8m，前視時間腰斬，是過彎
+                        % 失控的根因之一，詳細推導見 pure_pursuit_controller.m。
+params.Ld_time_cap_s = 0.4;  % [s] 前視距離上限的「時間版」係數：
+                        % 實際上限 = max(Ld_max, Ld_time_cap_s*v)，讓上限
+                        % 隨車速線性成長，不會在更高速度又重新頂到天花板。
+                        % v=6m/s（設計基準）時 max(8,2.4)=8，跟原本行為
+                        % 完全一樣；v=25m/s 時 max(8,10)=10，Ld_raw=9.5m
+                        % 不再被砍。
 params.kappa_gain = 6.0;% 曲率前視縮短係數，彎道時縮短 Ld
 
 % --- 航向回授增益 ---
@@ -134,11 +146,17 @@ refpath.kappa = kappa_smooth(:);
 
 % =========================================================================
 % 步驟二：曲率限速（論文側向加速度約束）
-% 公式：v_curve = sqrt(a_lat_max / |kappa|)
+% 公式：v_curve = sqrt(a_lat_max * a_lat_margin / |kappa|)
 % 物理意義：在曲率 kappa 的彎道上，要滿足 |v²·kappa| ≤ a_lat_max
-%          最大允許速度就是 sqrt(a_lat_max / |kappa|)
+%          最大允許速度本來是 sqrt(a_lat_max / |kappa|)，乘上安全餘裕
+%          係數 a_lat_margin（<=1，跟 compute_v_profile.m 用同一個
+%          參數、同樣的理由——貼著零餘裕的物理極限規劃，車輛稍有落差
+%          就會被 pure_pursuit_controller.m 的側向加速度硬限制砍轉向角，
+%          完整推導見 compute_v_profile.m 檔頭）。這條是整條路線版，
+%          跟即時候選路徑版用同一個 a_lat_margin，避免兩邊參數各自
+%          維護、又重蹈本次修 STEP2 偏移量公式那次的分岔覆轍。
 % =========================================================================
-v_curve = sqrt(params.a_lat_max ./ max(abs(refpath.kappa), 1e-4));
+v_curve = sqrt(params.a_lat_max * params.a_lat_margin ./ max(abs(refpath.kappa), 1e-4));
 v_curve = min(v_curve, params.v_des);   % 不超過期望巡航速度
 v_curve = max(v_curve, params.v_min);   % 不低於最低速度
 
@@ -198,7 +216,10 @@ refpath.s_arc = s_arc;          % 弧長累積值 (m)
 stride = 50;  % 每 50 點取一個 waypoint（僅供顯示用）
 gps_wp = [refpath.x(1:stride:end), refpath.y(1:stride:end)];
 
-seed_state = [refpath.x(1), refpath.y(1), refpath.phi(1)];
+% 初始種子狀態的速度用 v_des：這是模擬開始前的第一次窗口生成，車輛實際
+% 速度還沒開始積分，用期望巡航速度當保守假設，確保窗口從一開始就夠長
+% （見 generate_local_paths.m 檔頭「窗口長度隨車速動態調整」說明）
+seed_state = [refpath.x(1), refpath.y(1), refpath.phi(1), params.v_des];
 path_candidates = generate_local_paths(seed_state, refpath, params, params.N_paths, []);
 
 % 初始選擇中間那條（最接近原始路徑）
@@ -223,6 +244,11 @@ y1 = yh - params.L2 * sin(yaw1);
 
 % 模擬總步數（最多 3000 步，或路徑長度，取較小值）
 Nsim = min(length(refpath.x), 3000);
+
+% shape_v_profile_cubic.m 用有限差分估計目前縱向加速度 a_now 的邊界條件，
+% 需要「上一個控制步的速度」；模擬開始時還沒有上一步，取當下速度、
+% 讓第一次估計出來的 a_now=0（合理初始猜測，不影響安全上限本身）
+v_prev_step = v;
 
 % 上一步的最近點索引，用於 controller 搜尋視窗加速
 idx_prev = 1;
@@ -282,7 +308,7 @@ for k = 1:Nsim
 
         % ---- 即時局部路徑重生成 + 重選（每 T_replan 步一次）----
     if mod(k, params.T_replan) == 1
-        state = [x0, y0, yaw0];
+        state = [x0, y0, yaw0, v];   % v 用來動態決定窗口長度，見 generate_local_paths.m 檔頭說明
         path_candidates = generate_local_paths(state, refpath, params, params.N_paths, []);
 
         trailer_state = [x0, y0, yaw0, yaw1, v];
@@ -290,6 +316,18 @@ for k = 1:Nsim
         active_path_idx = best_idx;
         refpath_active  = path_candidates{active_path_idx};
         idx_prev = 1;   % 候選路徑每次都是全新陣列，索引不再跨 tick 延續，必須無條件重置
+
+        % ---- 三次多項式弧長速度剖面整形（shape_v_profile_cubic.m）----
+        % 用車輛「當下真實」速度/加速度當邊界條件，把 compute_v_profile.m
+        % 算出的安全速度上限重新整形成 v/a 都連續的平滑減速曲線，直接
+        % 覆寫 refpath_active.v_profile——下面 v_ref_now 讀的就是這條，
+        % 確保真的影響即時控制，不是只是額外畫出來的參考線（見該檔案
+        % 檔頭完整推導與安全性保證）。v_profile_cubic_enable=false 時
+        % 跳過，直接用 compute_v_profile.m 的安全上限本身。
+        if params.v_profile_cubic_enable
+            a_now = (v - v_prev_step) / params.Ts;
+            refpath_active.v_profile = shape_v_profile_cubic(refpath_active, v, a_now, params);
+        end
 
         hist.local_anchor_err(k) = hypot(refpath_active.x(1)-x0, refpath_active.y(1)-y0);
 
@@ -313,8 +351,8 @@ for k = 1:Nsim
     % --- 呼叫 Pure Pursuit 控制器，取得轉向角指令 ---
     % 輸入：當前車輛狀態 (x, y, yaw, v)、參考路徑、參數、上步最近點索引
     % 輸出：delta（轉向角）、idx_target（目標點）、idx_near（最近點）
-    %       Ld（前視距離）、alpha（方位角誤差）
-    [delta, idx_target, idx_near, Ld, alpha] = ...
+    %       Ld（前視距離）、alpha（方位角誤差）、v_lat_limit（見下方說明）
+    [delta, idx_target, idx_near, Ld, alpha, v_lat_limit] = ...
     pure_pursuit_controller(x0, y0, yaw0, v, refpath_active, params, idx_prev);
 
     % 更新搜尋視窗起點為本步最近點（下步搜尋從這裡開始，加速搜尋）
@@ -324,8 +362,25 @@ for k = 1:Nsim
     % 從速度規劃取得當前參考速度
     v_ref_now = refpath_active.v_profile(idx_near);
 
+    % ---- 轉向飽和即時回饋：跟 v_lat_limit 取更保守的當這一步的目標 ----
+    % v_lat_limit 是 pure_pursuit_controller.m 這一步「轉向幾何真正需要
+    % 的曲率」換算出的最高速度（見該檔案步驟十的完整推導）。v_profile
+    % 是每次 replan（0.5秒一次）事先規劃好的速度剖面，如果車輛目前實際
+    % 速度因為任何原因還沒跟上該有的減速進度，會在還沒減到位之前就先
+    % 被轉向的側向加速度安全網砍掉轉向角，這段時間車輛完全轉不了彎、
+    % 只能直行衝出母路徑——這正是 v_des 提高到 25m/s 後車輛過彎失控、
+    % 且失控後修正過度來回振盪的根因。取兩者較小值，讓速度目標「即時」
+    % 反映「這一步的轉向到底還撞不撞得到這道安全網」，不用等到下一次
+    % replan 才更新；車速本身仍然只用 a_dec_max 的物理減速率去逼近這個
+    % 目標（下面的一階跟隨邏輯完全沒變），沒有違反任何運動學限制。
+    v_ref_now = min(v_ref_now, v_lat_limit);
+
     % --- 鉸接角安全網：逼近 phi_max 時漸進降速（只降速，不動轉向）---
     [v_ref_now, gov_active, hitch_now] = hitch_angle_governor(v_ref_now, yaw0, yaw1, params);
+
+    % 保存這步更新「前」的速度，供下次 replan 時 shape_v_profile_cubic.m
+    % 用有限差分 (v-v_prev_step)/Ts 估計當下縱向加速度 a_now 邊界條件
+    v_prev_step = v;
 
     % 一階速度跟隨：以 a_acc_max / a_dec_max 斜率趨近參考速度
     if v_ref_now > v

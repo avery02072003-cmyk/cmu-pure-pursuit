@@ -40,21 +40,53 @@
 %   最中間那條（index = ceil(N/2)，通常對應偏移量 0、最接近母路徑中心線
 %   的候選路徑）—— 這是最後一道防線，避免無解時整個選路機制當機。
 %
+% 回收模式（recovery mode）—— 這次新增，解決「候選都離車輛很遠時沒有
+% 導回中心的邏輯」這個缺口：
+%   generate_local_paths.m 每次 replan 都用「車輛目前位置」重新做母路徑
+%   最近點搜尋當錨點，候選路徑就是這個錨點左右各偏移一點的平行曲線。
+%   正常情況下（cte 小）這完全沒問題：cte minimization 自然會選中
+%   offset≈0 的候選，因為那條剛好也離車輛最近。但一旦車輛已經偏出候選
+%   涵蓋範圍（例如過彎太快、center 候選一度被 check_hitch_angle 判定
+%   不可行，被迫選了曲率較緩的極端候選），問題就出現了：candidate i 的
+%   cte_i 本質上量的是「車輛目前位置」跟「這個新錨點 + offset_i」的距離，
+%   而這個錨點本身已經是從車輛（已經偏移的）位置重新搜尋出來的——所以
+%   cte 最小的候選，幾乎必然又是「offset 剛好匹配車輛目前已經偏移量」
+%   的那條，而不是「真正的車道中心線」。如果那個造成 center 不可行的
+%   原因（例如車速還沒完全降下來）在下一次 replan 還沒解除，同一套邏輯
+%   會再選一次同一側的極端候選——於是車輛在每個新錨點上不斷重複選到
+%   同一側，跟真正的母路徑中心線越差越遠，形成棱形發散（實測：CTE 從
+%   數公尺内一路發散到 50+ 公尺，過程中轉向角卻只有幾度——代表車輛把
+%   選中的候選路徑追得很準，問題出在候選本身已經偏離真正車道中心線）。
+%
+%   偵測方式：檢查所有「可行」候選裡最小的 cte 是否已經超過一個車道寬
+%   （params.lane_width）。正常追蹤時 cte 遠小於這個門檻，這個判斷完全
+%   不會觸發，不影響既有行為；只有真的已經偏出候選涵蓋範圍太多時才會
+%   觸發。觸發後，評分不再看 cte（此時 cte 已經不具鑑別力，見上面的
+%   推導——它只會不斷確認車輛目前已經偏移到哪，而不是引導車輛修正）
+%   ，改成直接偏好 |offset_i| 最小（也就是最接近真正母路徑中心線）的
+%   可行候選，讓車輛能一步步往回收斂，而不是每次都被鎖定在同一側。
+%
 % 輸入：
 %   path_candidates : cell array，每個元素是候選路徑 struct（.x .y .phi
-%                      .kappa .v_profile），可能包含空陣列 [] 代表該候選
-%                      路徑生成失敗（見 stitch_local_path.m 的容錯處理）
+%                      .offset .kappa .v_profile），可能包含空陣列 []
+%                      代表該候選路徑生成失敗（見 stitch_local_path.m 的
+%                      容錯處理）。.offset 供回收模式判斷用，由
+%                      generate_local_paths.m / my_multi_path.m 產生
 %   trailer_state   : [x_tractor, y_tractor, yaw_tractor, yaw_trailer, v]
 %                      車輛目前完整狀態（拖車頭位置/航向、貨櫃航向、速度）
-%   params          : 需要 w_cte, w_kappa, w_hitch, L2, phi_max
+%   params          : 需要 w_cte, w_kappa, w_hitch, L2, phi_max, lane_width
+%                      （lane_width 是回收模式的觸發門檻，見上方說明）
 %
 % 輸出：
-%   best_idx : 分數最低（最適合追蹤）的候選路徑索引
+%   best_idx : 分數最低（最適合追蹤）的候選路徑索引；回收模式時則是
+%              可行候選裡 |offset| 最小（最接近母路徑中心線）的索引
 % =========================================================================
 
 function best_idx = select_best_path(path_candidates, trailer_state, params)
     N = numel(path_candidates);
-    scores = inf(1, N);
+    scores      = inf(1, N);
+    cte_vals    = inf(1, N);   % 只有可行候選才填入實際 cte，供回收模式偵測門檻用
+    offset_vals = zeros(1, N);
 
     yaw0 = trailer_state(3);
     yaw1 = trailer_state(4);
@@ -76,14 +108,29 @@ function best_idx = select_best_path(path_candidates, trailer_state, params)
         hitch_penalty = current_hitch * params.w_hitch;
 
         if feas
+            cte_vals(i)    = cte;
+            offset_vals(i) = p.offset;
             scores(i) = params.w_cte * cte + ...
                         params.w_kappa * curv + ...
                         hitch_penalty;
         end
     end
-    [~, best_idx] = min(scores);
-    if isinf(scores(best_idx))
+
+    if all(isinf(scores))
         best_idx = ceil(N/2);  % 全不可行時選中間路徑（最後防線）
+        return;
+    end
+
+    if min(cte_vals) > params.lane_width
+        % ---- 回收模式：連最好的可行候選都離車輛超過一個車道寬，cte 已經
+        % 不具鑑別力（見檔頭推導），改成直接偏好離母路徑中心線最近
+        % （|offset| 最小）的可行候選，引導車輛逐次 replan 收斂回中心，
+        % 而不是重複鎖定在偏移後的同一側 ----
+        offset_pick = abs(offset_vals);
+        offset_pick(isinf(scores)) = inf;   % 不可行的候選排除在外
+        [~, best_idx] = min(offset_pick);
+    else
+        [~, best_idx] = min(scores);
     end
 end
 
