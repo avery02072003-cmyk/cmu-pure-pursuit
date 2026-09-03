@@ -21,12 +21,11 @@
 %   idx_near    : 最近點在 refpath 的索引
 %   Ld          : 本步動態前視距離 (m)
 %   alpha       : 車輛到目標點的方位角誤差 (rad)
-%   v_lat_limit : 路徑在 look-ahead 目標點的幾何曲率換算出來「車輛最快
-%                 只能開多快」的速度上限 (m/s)（含 a_lat_margin 安全
-%                 餘裕）。供 main_pure_pursuit_sim.m 的縱向速度控制即時
-%                 取用（見步驟十的完整推導）——不是拿來取代
-%                 compute_v_profile.m 事先規劃好的 v_profile，而是跟它
-%                 取更保守的那個當這一步的即時目標，讓速度控制不用等到
+%   v_lat_limit : refpath.v_profile(idx_target)，這條路徑在 look-ahead
+%                 目標點的合法速度上限 (m/s)（見步驟十的完整推導）。供
+%                 main_pure_pursuit_sim.m 的縱向速度控制即時取用——不是
+%                 拿來取代 compute_v_profile.m 事先規劃好的 v_profile，
+%                 就是同一份 v_profile 的即時取樣，讓速度控制不用等到
 %                 下次 replan 才發現「這一步其實已經轉不動了」。
 %
 % 控制器架構：
@@ -218,26 +217,27 @@ delta = max(-delta_max_phys, min(delta, delta_max_phys));
 %   的物理減速率逼近這個目標（沒有違反任何運動學限制，只是讓目標值
 %   更即時、更準確，不再依賴半秒才更新一次、可能偏樂觀的預先規劃值）。
 %
-%   曲率來源：用 refpath.kappa(idx_target)（路徑本身在 look-ahead 目標點
-%   的幾何曲率，跟 compute_v_profile.m 建 v_profile 用的是同一組
-%   compute_path_curvature.m 算出來、已經移動平均濾波過的平滑曲率），
-%   不是從這一步實際命令的 delta 反推 kappa_cmd。原因：kappa_cmd 會因為
-%   look-ahead 目標點落在離散路徑點之間跳動、貨櫃動態瞬態等因素逐步
-%   雜訊震盪（實測：即使車輛平順追蹤、CTE 幾乎是零，用 kappa_cmd 反推
-%   的 v_lat_limit 仍然在 5~25 m/s 之間鋸齒狀劇烈跳動），直接拿雜訊訊號
-%   當速度目標並不理想；路徑幾何曲率是路徑本身固定的屬性、不隨控制器
-%   逐步的雜訊變動，換算出來的速度目標自然平滑，物理意義也更直接（車
-%   速要配合「即將面對的曲率」，本來就該看路徑本身，不是看這一步剛好
-%   算出的轉向指令）。乘上 a_lat_margin，是讓這個即時回饋跟
-%   compute_v_profile.m 的規劃目標用同一套安全餘裕標準，兩者在正常情況
-%   下應該非常接近（因為源頭是同一個 kappa 陣列），v_lat_limit 這時純粹
-%   是錦上添花的一致性保險，只有在車速真的還沒跟上規劃進度時才會實際
-%   拉低目標——下面的轉向硬限制（kappa_cmd、delta 的再截斷）維持用
-%   controller 真正下達的 delta 計算，因為那是真正的物理安全底線，
-%   必須反映「這一步實際上到底轉了多少」，不能用平滑過的路徑曲率取代。
+%   曲率來源：直接讀 refpath.v_profile(idx_target)，不是自己重新算一次
+%   sqrt(a_lat_max*a_lat_margin/kappa) 公式。原因：refpath.v_profile 本來
+%   就是 compute_v_profile.m 用同一個 kappa 陣列、同一組 a_lat_max/
+%   a_lat_margin 算出來的「這個候選路徑每一點的合法速度上限」，而且比
+%   單純的側向加速度公式更保守（還疊加了 backward/forward pass 的減速
+%   前瞻、鉸接角上限、v_des 上限），本來就是這整個系統對「這一點該開
+%   多快」唯一的真相來源。自己重新推一次同樣的曲率-速度公式，等於在
+%   controller 這裡又開了一份第二來源，跟 compute_v_profile.m 那份分岔、
+%   需要手動保持同步——這正是這次除錯過程中一再出現、也一再修掉的
+%   「同一個公式維護兩份」風險（見 compute_v_profile.m 檔頭 ds 那段的
+%   同類教訓）。直接讀 idx_target 這一點的 v_profile，語意完全相同（都是
+%   「即將面對的這個位置，最快能開多快」），而且自動繼承 v_profile 已經
+%   做過的所有收緊，不會有兩份公式對不齊的風險。
+%
+%   （早期版本原本是用「這一步實際命令的 delta」反推 kappa_cmd 再算
+%   v_lat_limit，但那個訊號會因為 look-ahead 目標點在離散路徑點間跳動
+%   而雜訊震盪，跟這個問題是同一個「不要用會抖動的來源」的教訓，只是
+%   進一步發現：連改用平滑的路徑曲率、也不必自己重算，直接讀現成的
+%   v_profile 更簡單也更不容易出錯。）
 % -------------------------------------------------------------------------
-kappa_path_ahead = abs(refpath.kappa(idx_target));  % 路徑本身在目標點的幾何曲率（平滑，見上方說明）
-v_lat_limit = sqrt(params.a_lat_max * params.a_lat_margin / max(kappa_path_ahead, 1e-4));  % 這個即將面對的曲率允許的最高速度
+v_lat_limit = refpath.v_profile(idx_target);  % 這個路徑在目標點的合法速度上限，見上方說明
 
 kappa_cmd = tan(delta) / params.L1;    % 由「這一步實際命令的」轉向角計算曲率指令，供下面硬限制用
 a_lat_cmd  = v^2 * kappa_cmd;         % 估算側向加速度
