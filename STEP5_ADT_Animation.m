@@ -75,35 +75,14 @@ h3D_Trailer = hgtransform('Parent', ax3D);
 % -------------------------------------------------------------------------
 % 跟拍相機（照抄 STEP4_ETS2_Animation_MultiView.m 的公式）：相機架在拖車頭
 % 後方 camDist、高度 camH，偏一個 offsetAngle 讓視角不會死板地正後方；
-% 目標點設在拖車頭前方 5m，讓視野自然帶到前方路況。
-%
-% follow_camera：這個鏡頭是「每一幀都強制」設 campos/camtarget，所以動畫
-% 播放中滑鼠拖曳旋轉會立刻被下一幀蓋掉、完全轉不動。要能隨時自由旋轉
-% 視角，兩者只能二選一：
-%   true  ＝維持跟拍鏡頭鎖定（目前預設），畫面永遠貼著車走，但不能旋轉。
-%   false ＝改成「一開始就把整條賽道框進畫面、之後完全不再動相機」，
-%           播放中用滑鼠拖曳（rotate3d）可以隨時自由旋轉/翻轉視角，
-%           缺點是看不到跟拍的近景特寫、車子在畫面裡會比較小。
+% 目標點設在拖車頭前方 5m，讓視野自然帶到前方路況。每一幀都重新設一次
+% campos/camtarget，所以播放中無法用滑鼠拖曳旋轉視角（曾經試過改成
+% 固定相機讓使用者自由旋轉，但調不出滿意的畫面，先維持這個鎖定跟拍版本）。
 % -------------------------------------------------------------------------
-follow_camera = false;
-
 camDist = 40; camH = 22; offsetAngle = deg2rad(25);
 VIEW_RADIUS = 45;
 
-if follow_camera
-    playback_speed = 1.0;
-else
-    % 固定全景不需要逐幀算相機，用整條母路徑的座標範圍框住（留 20m 邊界）
-    margin = 20;
-    xlim(ax3D, [min(refpath.x)-margin, max(refpath.x)+margin]);
-    ylim(ax3D, [min(refpath.y)-margin, max(refpath.y)+margin]);
-    zlim(ax3D, [-1, 20]);
-    view(ax3D, -40, 35);
-    rotate3d(ax3D, 'on');
-    zoom(ax3D, 'on');
-    pan(ax3D, 'on');
-    playback_speed = 4.0;   % 全景模式車子在畫面裡較小，加快播放節奏比較不無聊
-end
+playback_speed = 1.0;   % 1.0 = 正常速度，跟 STEP4 同一套慣例
 
 for k = 1:Nsim
     x0 = hist.x0(k); y0 = hist.y0(k); th0 = hist.yaw0(k);
@@ -128,15 +107,11 @@ for k = 1:Nsim
     addpoints(h3D_TraceH,  xh, yh, 0.05);
     addpoints(h3D_TraceP1, x1, y1, 0.05);
 
-    if follow_camera
-        xlim(ax3D, [x0 - VIEW_RADIUS, x0 + VIEW_RADIUS]);
-        ylim(ax3D, [y0 - VIEW_RADIUS, y0 + VIEW_RADIUS]);
-        campos(ax3D, [x0 - camDist * cos(th0 + offsetAngle), y0 - camDist * sin(th0 + offsetAngle), camH]);
-        camtarget(ax3D, [x0 + 5 * cos(th0), y0 + 5 * sin(th0), 1.0]);
-        set(hTextSpeed3D, 'Position', [x0, y0, 6], 'String', sprintf('%.1f km/h', v_curr * 3.6));
-    else
-        set(hTextSpeed3D, 'Position', [x0, y0, 8], 'String', sprintf('%.1f km/h', v_curr * 3.6));
-    end
+    xlim(ax3D, [x0 - VIEW_RADIUS, x0 + VIEW_RADIUS]);
+    ylim(ax3D, [y0 - VIEW_RADIUS, y0 + VIEW_RADIUS]);
+    campos(ax3D, [x0 - camDist * cos(th0 + offsetAngle), y0 - camDist * sin(th0 + offsetAngle), camH]);
+    camtarget(ax3D, [x0 + 5 * cos(th0), y0 + 5 * sin(th0), 1.0]);
+    set(hTextSpeed3D, 'Position', [x0, y0, 6], 'String', sprintf('%.1f km/h', v_curr * 3.6));
     set(hOSD, 'String', {sprintf('Time: %.1f s', results.ts(k)), sprintf('Speed: %.1f km/h', v_curr * 3.6)});
 
     drawnow limitrate;
