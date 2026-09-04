@@ -1,0 +1,7 @@
+# Claude Code / AI 助理相關檔案——跟程式內容無關，只在本機/OneDrive 同步用，不進版本控制
+.claude/
+CLAUDE.md
+PROJECT_LOG.md
+
+# 誤 commit 的雜訊檔（git config 內容外洩）——不是程式內容，不進版本控制
+er.name
